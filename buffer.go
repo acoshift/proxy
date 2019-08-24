@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"io"
 	"sync"
 )
 
@@ -18,4 +19,10 @@ func getBuffer() []byte {
 
 func putBuffer(b []byte) {
 	bufferPool.Put(b)
+}
+
+func copyBuffer(dst io.Writer, src io.Reader) (int64, error) {
+	buf := getBuffer()
+	defer putBuffer(buf)
+	return io.CopyBuffer(dst, src, buf)
 }

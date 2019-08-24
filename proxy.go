@@ -7,6 +7,8 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"io"
+	"io/ioutil"
+	"log"
 	"math/big"
 	"net"
 	"net/http"
@@ -17,6 +19,7 @@ import (
 type Proxy struct {
 	PrivateKey  *ecdsa.PrivateKey
 	Certificate *x509.Certificate
+	CacheDir    string // empty string to disable cache
 
 	once      sync.Once
 	certsLock sync.RWMutex
@@ -25,19 +28,40 @@ type Proxy struct {
 	server    *http.Server
 	tr        *http.Transport
 	httpsConn chan net.Conn
+	cache     cache
 }
 
 func (p *Proxy) init() {
 	p.certs = make(map[string]*tls.Certificate)
 	p.httpsConn = make(chan net.Conn)
+	p.cache.dir = p.CacheDir
 
 	connPipe := &connPipe{p.httpsConn}
 	p.server = &http.Server{
-		Handler: http.HandlerFunc(p.proxyHTTPS),
+		ErrorLog: log.New(ioutil.Discard, "", 0),
+		Handler:  http.HandlerFunc(p.proxyHTTPS),
 		TLSConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			CurvePreferences: []tls.CurveID{
+				tls.X25519,
+				tls.CurveP256,
+			},
+			PreferServerCipherSuites: true,
+			CipherSuites: []uint16{
+				tls.TLS_AES_256_GCM_SHA384,
+				tls.TLS_CHACHA20_POLY1305_SHA256,
+				tls.TLS_AES_128_GCM_SHA256,
+				tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+				tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
+				tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
+				tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+			},
 			GetCertificate: func(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
 				p.certsLock.RLock()
-				if cert := p.certs[info.ServerName]; cert != nil {
+				cert := p.certs[info.ServerName]
+				if cert != nil && time.Now().Before(cert.Leaf.NotAfter.Add(-10*time.Minute)) {
 					p.certsLock.RUnlock()
 					return cert, nil
 				}
@@ -91,7 +115,7 @@ func (p *Proxy) issueCert(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
 		Issuer:       p.Certificate.Subject,
 		SerialNumber: serial,
 		NotBefore:    now.UTC(),
-		NotAfter:     now.Add(3650 * 24 * time.Hour).UTC(),
+		NotAfter:     now.Add(365 * 24 * time.Hour).UTC(),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		DNSNames:     []string{info.ServerName},
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
@@ -120,21 +144,33 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Proxy) proxyHTTP(w http.ResponseWriter, r *http.Request) {
-	r.Header.Set("Connection", "keep-alive")
 	r.URL.Host = r.Host
+
+	if resp := p.cache.get(r); resp != nil {
+		log.Println("HIT", r.URL.String())
+		resp.Write(w)
+		return
+	}
+
+	r.Header.Set("Connection", "keep-alive")
 
 	resp, err := p.tr.RoundTrip(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
+	defer resp.Body.Close()
+	defer copyBuffer(ioutil.Discard, resp.Body)
+
+	respBody := io.Reader(resp.Body)
+	if cit := p.cache.NewItem(resp); cit != nil {
+		respBody = io.TeeReader(resp.Body, cit)
+		defer cit.Close()
+	}
 
 	copyHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
-
-	buf := getBuffer()
-	defer putBuffer(buf)
-	io.CopyBuffer(w, resp.Body, buf)
+	copyBuffer(w, respBody)
 }
 
 func (p *Proxy) proxyHTTPS(w http.ResponseWriter, r *http.Request) {

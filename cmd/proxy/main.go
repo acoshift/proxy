@@ -26,10 +26,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	http.ListenAndServe(":"+port, &proxy.Proxy{
+	log.Fatal(http.ListenAndServe(":"+port, &proxy.Proxy{
 		PrivateKey:  privateKey,
 		Certificate: certificate,
-	})
+		CacheDir:    os.Getenv("CACHE_DIR"),
+	}))
 }
 
 func loadPem(filename string) []byte {
