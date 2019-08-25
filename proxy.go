@@ -121,11 +121,10 @@ func (p *Proxy) issueCert(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
 		},
 		Issuer:       p.Certificate.Subject,
 		SerialNumber: serial,
-		NotBefore:    now.UTC(),
-		NotAfter:     now.Add(365 * 24 * time.Hour).UTC(),
+		NotBefore:    now.AddDate(0, 0, -1).UTC(),
+		NotAfter:     now.AddDate(1, 0, 0).UTC(),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		DNSNames:     []string{info.ServerName},
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}, p.Certificate, &p.PrivateKey.PublicKey, p.PrivateKey)
 	if err != nil {
 		return nil, err
@@ -208,7 +207,7 @@ func (p *Proxy) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 	req.Header.Set("Connection", "keep-alive")
 	req.Header.Del("Accept-Encoding")
 
-	resp, err := p.tr.RoundTrip(r)
+	resp, err := p.tr.RoundTrip(&req)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return

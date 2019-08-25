@@ -8,10 +8,20 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 )
 
-const maxCacheItemSize = 32 * 1024 * 1024
+var proxyCacheHop = []string{
+	"X-Proxy-Key",
+	"X-Proxy-Expires",
+}
+
+const (
+	maxCacheItemSize = 32 * 1024 * 1024
+	maxCacheDuration = 3 * 365 * 24 * time.Hour
+)
 
 type cache struct {
 	dir string
@@ -22,7 +32,8 @@ func (c *cache) get(r *http.Request) *cacheResponseWriter {
 		return nil
 	}
 
-	fn := c.fnKey(c.key(r))
+	key := c.key(r)
+	fn := c.fnKey(key)
 	if fn == "" {
 		return nil
 	}
@@ -30,6 +41,19 @@ func (c *cache) get(r *http.Request) *cacheResponseWriter {
 	it := c.load(r, fn)
 	if it == nil {
 		return nil
+	}
+
+	if it.resp.Header.Get("X-Proxy-Key") != key {
+		it.Close()
+		return nil
+	}
+	if exp, _ := time.Parse(time.RFC3339, it.resp.Header.Get("X-Proxy-Expires")); time.Now().After(exp) {
+		it.Close()
+		return nil
+	}
+
+	for _, k := range proxyCacheHop {
+		it.resp.Header.Del(k)
 	}
 
 	return it
@@ -48,7 +72,9 @@ func (c *cache) NewItem(resp *http.Response) *cacheItem {
 	if c.dir == "" {
 		return nil
 	}
-	if !cacheables(resp) {
+
+	d := cacheables(resp)
+	if d <= 0 {
 		return nil
 	}
 
@@ -64,6 +90,16 @@ func (c *cache) NewItem(resp *http.Response) *cacheItem {
 		return nil
 	}
 	err = resp.Header.Write(fp)
+	if err != nil {
+		return nil
+	}
+
+	// proxy storage
+	_, err = fp.WriteString("X-Proxy-Key: " + key + "\n")
+	if err != nil {
+		return nil
+	}
+	_, err = fp.WriteString("X-Proxy-Expires: " + time.Now().Add(d).Format(time.RFC3339) + "\n")
 	if err != nil {
 		return nil
 	}
@@ -99,16 +135,20 @@ func (c *cache) load(r *http.Request, fn string) *cacheResponseWriter {
 	}
 }
 
-func cacheables(resp *http.Response) bool {
+func cacheables(resp *http.Response) time.Duration {
 	if resp.Request.Method != http.MethodGet {
-		return false
+		return 0
 	}
 	if resp.StatusCode != http.StatusOK {
-		return false
+		return 0
+	}
+
+	if resp.Header.Get("Set-Cookie") != "" {
+		return 0
 	}
 
 	if resp.ContentLength > maxCacheItemSize {
-		return false
+		return 0
 	}
 
 	{
@@ -116,29 +156,38 @@ func cacheables(resp *http.Response) bool {
 		x := extractHeaderValues(resp.Header["Vary"])
 		delete(x, "accept-encoding")
 		if len(x) > 0 {
-			return false
+			return 0
 		}
-	}
-
-	if alwaysCacheExt[path.Ext(resp.Request.URL.Path)] {
-		return true
 	}
 
 	{
 		x := extractHeaderValues(resp.Header["Cache-Control"])
 		if len(x) == 0 {
-			return false
+			if alwaysCacheExt[path.Ext(resp.Request.URL.Path)] {
+				return 6 * time.Hour
+			}
+
+			return 0
 		}
-		if x["immutable"] {
-			return true
+		if _, ok := x["immutable"]; ok {
+			return maxCacheDuration
 		}
-		if x["private"] || x["no-cache"] || x["no-store"] {
-			return false
+		if _, ok := x["no-cache"]; ok {
+			return 0
 		}
-		// TODO: extract max-age
+		if _, ok := x["no-store"]; ok {
+			return 0
+		}
+		if p := x["max-age"]; p != "" {
+			maxAge, _ := strconv.ParseInt(p, 10, 64)
+			if maxAge <= 0 {
+				return 0
+			}
+			return time.Duration(maxAge) * time.Second
+		}
 	}
 
-	return true
+	return 0
 }
 
 type cacheItem struct {
@@ -182,13 +231,19 @@ func (c *cacheResponseWriter) WriteTo(w http.ResponseWriter) {
 	copyBuffer(w, c.resp.Body)
 }
 
-func extractHeaderValues(vs []string) map[string]bool {
-	xs := make(map[string]bool)
+func extractHeaderValues(vs []string) map[string]string {
+	xs := make(map[string]string)
 	for _, v := range vs {
 		for _, x := range strings.Split(v, ",") {
 			x = strings.TrimSpace(x)
+			ps := strings.SplitN(x, "=", 2)
+			var p string
+			if len(ps) == 2 {
+				x, p = ps[0], ps[1]
+			} else {
+			}
 			x = strings.ToLower(x)
-			xs[x] = true
+			xs[x] = p
 		}
 	}
 	return xs

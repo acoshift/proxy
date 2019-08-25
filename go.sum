@@ -4,5 +4,7 @@ github.com/acoshift/middleware v0.4.1 h1:Fjz10OMNt7OxHA/YGT85iHELc3lxQzl7L57vrb6
 github.com/acoshift/middleware v0.4.1/go.mod h1:Q2Jna8z8qw97nuR0iemEWK7G7S3SaNufh/YMIyb3QeQ=
 github.com/acoshift/middleware v0.4.2 h1:iwfTKWkdgb5u7FKE7lWl29pPuajGu492ssdUk160Ybw=
 github.com/acoshift/middleware v0.4.2/go.mod h1:Q2Jna8z8qw97nuR0iemEWK7G7S3SaNufh/YMIyb3QeQ=
+github.com/acoshift/middleware v0.4.3-0.20190825083018-7bea01be2edf h1:Cn6QLUZZBaPP7XbqFRxTJsj6eDC1S3TxCkCRU8HwiJI=
+github.com/acoshift/middleware v0.4.3-0.20190825083018-7bea01be2edf/go.mod h1:Q2Jna8z8qw97nuR0iemEWK7G7S3SaNufh/YMIyb3QeQ=
 github.com/google/brotli v1.0.5 h1:0IjJC+hrZI6rIHQC5FngT7evLtLXKak0cNE/+knKOcI=
 github.com/google/brotli v1.0.5/go.mod h1:XpGqLY1HgMKTQI5TU8iAKE/okaKqS9h1e6KRlRztlOU=
