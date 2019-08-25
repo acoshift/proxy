@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -30,12 +31,6 @@ func (c *cache) get(r *http.Request) *cacheResponseWriter {
 	if it == nil {
 		return nil
 	}
-
-	v := parseVary(it.resp.Header.Get("X-Proxy-Request-Vary"))
-	if !v.Valid(r) {
-		return nil
-	}
-	it.resp.Header.Del("X-Proxy-Request-Vary")
 
 	return it
 }
@@ -68,12 +63,10 @@ func (c *cache) NewItem(resp *http.Response) *cacheItem {
 	if err != nil {
 		return nil
 	}
-	resp.Header.Set("X-Proxy-Request-Vary", newVary(resp).String())
 	err = resp.Header.Write(fp)
 	if err != nil {
 		return nil
 	}
-	resp.Header.Del("X-Proxy-Request-Vary")
 
 	_, err = fp.WriteString("\n")
 	if err != nil {
@@ -116,18 +109,27 @@ func cacheables(resp *http.Response) bool {
 		return false
 	}
 
-	if resp.Request.URL.Host == "fonts.googleapis.com" {
+	{
+		x := extractHeaderValues(resp.Header["Vary"])
+		delete(x, "accept-encoding")
+		if len(x) > 0 {
+			return false
+		}
+	}
+
+	if alwaysCacheExt[path.Ext(resp.Request.URL.Path)] {
 		return true
 	}
 
-	if x := resp.Header.Get("Cache-Control"); x != "" {
-		if strings.Contains(x, "private") {
+	{
+		x := extractHeaderValues(resp.Header["Cache-Control"])
+		if len(x) == 0 {
 			return false
 		}
-		if strings.Contains(x, "no-cache") {
-			return false
+		if x["immutable"] {
+			return true
 		}
-		if strings.Contains(x, "no-store") {
+		if x["private"] || x["no-cache"] || x["no-store"] {
 			return false
 		}
 	}
@@ -191,4 +193,25 @@ func (c cacheResponseWriter) Write(w http.ResponseWriter) {
 	copyHeaders(w.Header(), c.resp.Header)
 	w.WriteHeader(c.resp.StatusCode)
 	copyBuffer(w, c.resp.Body)
+}
+
+func extractHeaderValues(vs []string) map[string]bool {
+	xs := make(map[string]bool)
+	for _, v := range vs {
+		for _, x := range strings.Split(v, ",") {
+			x = strings.TrimSpace(x)
+			x = strings.ToLower(x)
+			xs[x] = true
+		}
+	}
+	return xs
+}
+
+var alwaysCacheExt = map[string]bool{
+	".jpg":  true,
+	".jpeg": true,
+	".png":  true,
+	".svg":  true,
+	".js":   true,
+	".css":  true,
 }
