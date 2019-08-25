@@ -19,7 +19,3 @@ openssl req -new -x509 -key ca.key -out ca.crt -days 3650
 openssl ecparam -name prime256v1 -genkey -out ca.key -noout
 openssl req -new -x509 -key ca.key -out ca.crt -days 3650
 ```
-
-## TODO
-
-- [ ] support websocket

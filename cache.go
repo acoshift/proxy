@@ -4,14 +4,14 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
-	"io"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
 )
+
+const maxCacheItemSize = 32 * 1024 * 1024
 
 type cache struct {
 	dir string
@@ -73,11 +73,9 @@ func (c *cache) NewItem(resp *http.Response) *cacheItem {
 		return nil
 	}
 	return &cacheItem{
-		fp:     fp,
-		Key:    key,
-		fn:     fn,
-		Writer: fp,
-		Closer: fp,
+		fp:  fp,
+		Key: key,
+		fn:  fn,
 	}
 }
 
@@ -109,7 +107,12 @@ func cacheables(resp *http.Response) bool {
 		return false
 	}
 
+	if resp.ContentLength > maxCacheItemSize {
+		return false
+	}
+
 	{
+		// do not support cache complex vary
 		x := extractHeaderValues(resp.Header["Vary"])
 		delete(x, "accept-encoding")
 		if len(x) > 0 {
@@ -132,55 +135,24 @@ func cacheables(resp *http.Response) bool {
 		if x["private"] || x["no-cache"] || x["no-store"] {
 			return false
 		}
-	}
-
-	return true
-}
-
-type vary map[string]string
-
-func newVary(resp *http.Response) vary {
-	m := make(vary)
-	for _, x := range resp.Header["Vary"] {
-		for _, p := range strings.Split(x, ",") {
-			p = strings.TrimSpace(p)
-			m[p] = resp.Request.Header.Get(p)
-		}
-	}
-	return m
-}
-
-func parseVary(s string) vary {
-	v := make(vary)
-	json.Unmarshal([]byte(s), &v)
-	return v
-}
-
-func (v vary) String() string {
-	b, _ := json.Marshal(v)
-	return string(b)
-}
-
-func (v vary) Valid(r *http.Request) bool {
-	if len(v) == 0 {
-		return true
-	}
-
-	for k := range v {
-		if v[k] != r.Header.Get(k) {
-			return false
-		}
+		// TODO: extract max-age
 	}
 
 	return true
 }
 
 type cacheItem struct {
-	io.Writer
-	io.Closer
 	fp  *os.File
 	fn  string
 	Key string
+}
+
+func (c cacheItem) Write(p []byte) (n int, err error) {
+	return c.fp.Write(p)
+}
+
+func (c cacheItem) Close() error {
+	return c.fp.Close()
 }
 
 type cacheResponseWriter struct {
@@ -188,8 +160,13 @@ type cacheResponseWriter struct {
 	resp *http.Response
 }
 
-func (c cacheResponseWriter) Write(w http.ResponseWriter) {
-	defer c.fp.Close()
+func (c *cacheResponseWriter) Close() error {
+	c.resp.Body.Close()
+	return c.fp.Close()
+}
+
+func (c *cacheResponseWriter) WriteTo(w http.ResponseWriter) {
+	defer c.Close()
 	copyHeaders(w.Header(), c.resp.Header)
 	w.WriteHeader(c.resp.StatusCode)
 	copyBuffer(w, c.resp.Body)

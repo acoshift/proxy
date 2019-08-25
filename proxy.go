@@ -43,7 +43,6 @@ func (p *Proxy) init() {
 			Timeout:   15 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		DisableCompression:    true,
 		MaxIdleConnsPerHost:   32,
 		IdleConnTimeout:       5 * time.Minute,
 		TLSHandshakeTimeout:   10 * time.Second,
@@ -60,6 +59,7 @@ func (p *Proxy) init() {
 		Handler:      mw(http.HandlerFunc(p.proxyHTTPS)),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  3 * time.Minute,
 		TLSConfig: &tls.Config{
 			MinVersion: tls.VersionTLS12,
 			CurvePreferences: []tls.CurveID{
@@ -81,7 +81,7 @@ func (p *Proxy) init() {
 			GetCertificate: func(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
 				p.certsLock.RLock()
 				cert := p.certs[info.ServerName]
-				if cert != nil && time.Now().Before(cert.Leaf.NotAfter.Add(-10*time.Minute)) {
+				if cert != nil && time.Now().Before(cert.Leaf.NotAfter.AddDate(0, 0, -1)) {
 					p.certsLock.RUnlock()
 					return cert, nil
 				}
@@ -154,7 +154,27 @@ func (p *Proxy) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 	r.URL.Host = r.Host
 
 	if r.Header.Get("Connection") == "Upgrade" {
-		upstream, err := tls.Dial("tcp", r.Host+":443", nil)
+		host, port, _ := net.SplitHostPort(r.Host)
+		if port == "" {
+			if r.URL.Scheme == "https" {
+				port = "443"
+			} else {
+				port = "80"
+			}
+		}
+		if host == "" {
+			host = r.Host
+		}
+
+		var (
+			upstream net.Conn
+			err      error
+		)
+		if r.URL.Scheme == "https" {
+			upstream, err = tls.Dial("tcp", host+":"+port, nil)
+		} else {
+			upstream, err = net.Dial("tcp", host+":"+port)
+		}
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
@@ -177,39 +197,41 @@ func (p *Proxy) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if resp := p.cache.get(r); resp != nil {
 		w.Header().Set("X-Proxy-Cache-Status", "HIT")
-		resp.Write(w)
+		resp.WriteTo(w)
 		return
 	}
 
-	r.Header.Set("Connection", "keep-alive")
-	acceptEncoding := r.Header.Get("Accept-Encoding")
-	r.Header.Del("Accept-Encoding")
+	req := *r
+	req.Header = make(http.Header)
+	copyHeaders(req.Header, r.Header)
+
+	req.Header.Set("Connection", "keep-alive")
+	req.Header.Del("Accept-Encoding")
 
 	resp, err := p.tr.RoundTrip(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
+	defer resp.Body.Close()
 
-	r.Header.Set("Accept-Encoding", acceptEncoding)
-
-	respBody := io.Reader(resp.Body)
 	if cit := p.cache.NewItem(resp); cit != nil {
 		w.Header().Set("X-Proxy-Cache-Status", "MISS")
-		respBody = io.TeeReader(resp.Body, cit)
+		respBody := io.TeeReader(resp.Body, cit)
 		defer func() {
 			copyBuffer(ioutil.Discard, respBody)
 			cit.Close()
-			resp.Body.Close()
 		}()
-	} else {
-		w.Header().Set("X-Proxy-Cache-Status", "DISABLE")
-		defer resp.Body.Close()
+		copyHeaders(w.Header(), resp.Header)
+		w.WriteHeader(resp.StatusCode)
+		copyBuffer(w, respBody)
+		return
 	}
 
+	w.Header().Set("X-Proxy-Cache-Status", "DISABLE")
 	copyHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
-	copyBuffer(w, respBody)
+	copyBuffer(w, resp.Body)
 }
 
 func (p *Proxy) proxyHTTPS(w http.ResponseWriter, r *http.Request) {
