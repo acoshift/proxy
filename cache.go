@@ -53,8 +53,8 @@ func (c *cache) NewItem(resp *http.Response) *cacheItem {
 	}
 
 	key := c.key(resp.Request)
-	fn := c.fnKey(key)
-	fp, err := os.Create(filepath.Join(c.dir, fn))
+	fn := filepath.Join(c.dir, c.fnKey(key))
+	fp, err := os.Create(fn)
 	if err != nil {
 		return nil
 	}
@@ -147,12 +147,22 @@ type cacheItem struct {
 	Key string
 }
 
-func (c cacheItem) Write(p []byte) (n int, err error) {
+func (c *cacheItem) Write(p []byte) (n int, err error) {
 	return c.fp.Write(p)
 }
 
-func (c cacheItem) Close() error {
+func (c *cacheItem) Close() error {
 	return c.fp.Close()
+}
+
+func (c *cacheItem) CloseWithError(err error) {
+	c.Close()
+
+	if err == nil {
+		return
+	}
+
+	os.Remove(c.fn)
 }
 
 type cacheResponseWriter struct {

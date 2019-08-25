@@ -217,14 +217,10 @@ func (p *Proxy) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if cit := p.cache.NewItem(resp); cit != nil {
 		w.Header().Set("X-Proxy-Cache-Status", "MISS")
-		respBody := io.TeeReader(resp.Body, cit)
-		defer func() {
-			copyBuffer(ioutil.Discard, respBody)
-			cit.Close()
-		}()
 		copyHeaders(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)
-		copyBuffer(w, respBody)
+		_, err = copyBuffer(io.MultiWriter(w, cit), resp.Body)
+		cit.CloseWithError(err)
 		return
 	}
 
