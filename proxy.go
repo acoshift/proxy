@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
@@ -251,26 +250,28 @@ func (p *Proxy) tunnelHTTPS(w http.ResponseWriter, r *http.Request) {
 		}
 		defer upstream.Close()
 
-		w.WriteHeader(http.StatusOK)
-
-		downstream, _, err := w.(http.Hijacker).Hijack()
+		downstream, wr, err := w.(http.Hijacker).Hijack()
 		if err != nil {
-			fmt.Fprint(w, err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		defer downstream.Close()
+
+		wr.WriteString("HTTP/1.1 200 OK\n\n")
+		wr.Flush()
 
 		stream(upstream, downstream)
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-
-	downstream, _, err := w.(http.Hijacker).Hijack()
+	downstream, wr, err := w.(http.Hijacker).Hijack()
 	if err != nil {
-		fmt.Fprint(w, err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	wr.WriteString("HTTP/1.1 200 OK\n\n")
+	wr.Flush()
 
 	p.httpsConn <- downstream
 }
@@ -282,7 +283,7 @@ func copyHeaders(dst http.Header, src http.Header) {
 }
 
 func stream(c1, c2 net.Conn) error {
-	errCh := make(chan error, 1)
+	errCh := make(chan error)
 	go func() {
 		_, err := copyBuffer(c1, c2, 0)
 		errCh <- err
