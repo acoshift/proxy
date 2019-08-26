@@ -22,6 +22,7 @@ type Proxy struct {
 	PrivateKey  *ecdsa.PrivateKey
 	Certificate *x509.Certificate
 	CacheDir    string // empty string to disable cache
+	TLSConfig   *tls.Config
 
 	once      sync.Once
 	certsLock sync.RWMutex
@@ -38,10 +39,17 @@ func (p *Proxy) init() {
 	p.httpsConn = make(chan net.Conn)
 	p.cache.dir = p.CacheDir
 
+	if p.TLSConfig == nil {
+		p.TLSConfig = &tls.Config{}
+	}
+
 	p.tr = &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout:   15 * time.Second,
-			KeepAlive: 30 * time.Second,
+		DialContext: (&RetryDialer{
+			Dialer: net.Dialer{
+				Timeout:   15 * time.Second,
+				KeepAlive: 30 * time.Second,
+			},
+			MaxRetries: 2,
 		}).DialContext,
 		MaxIdleConnsPerHost:   32,
 		IdleConnTimeout:       5 * time.Minute,
@@ -49,55 +57,39 @@ func (p *Proxy) init() {
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 
+	connPipe := &connPipe{p.httpsConn}
+
+	p.TLSConfig.GetCertificate = func(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		p.certsLock.RLock()
+		cert := p.certs[info.ServerName]
+		if cert != nil && time.Now().Before(cert.Leaf.NotAfter.AddDate(0, 0, -1)) {
+			p.certsLock.RUnlock()
+			return cert, nil
+		}
+		p.certsLock.RUnlock()
+
+		cert, err := p.issueCert(info)
+		if err != nil {
+			return nil, err
+		}
+
+		p.certsLock.Lock()
+		p.certs[info.ServerName] = cert
+		p.certsLock.Unlock()
+		return cert, nil
+	}
+
 	mw := middleware.Chain(
 		middleware.Compress(middleware.BrCompressor),
 	)
 
-	connPipe := &connPipe{p.httpsConn}
 	p.server = &http.Server{
 		ErrorLog:     log.New(ioutil.Discard, "", 0),
 		Handler:      mw(http.HandlerFunc(p.proxyHTTPS)),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  3 * time.Minute,
-		TLSConfig: &tls.Config{
-			MinVersion: tls.VersionTLS12,
-			CurvePreferences: []tls.CurveID{
-				tls.X25519,
-				tls.CurveP256,
-			},
-			PreferServerCipherSuites: true,
-			CipherSuites: []uint16{
-				tls.TLS_AES_256_GCM_SHA384,
-				tls.TLS_CHACHA20_POLY1305_SHA256,
-				tls.TLS_AES_128_GCM_SHA256,
-				tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-				tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
-				tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
-				tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-			},
-			GetCertificate: func(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
-				p.certsLock.RLock()
-				cert := p.certs[info.ServerName]
-				if cert != nil && time.Now().Before(cert.Leaf.NotAfter.AddDate(0, 0, -1)) {
-					p.certsLock.RUnlock()
-					return cert, nil
-				}
-				p.certsLock.RUnlock()
-
-				cert, err := p.issueCert(info)
-				if err != nil {
-					return nil, err
-				}
-
-				p.certsLock.Lock()
-				p.certs[info.ServerName] = cert
-				p.certsLock.Unlock()
-				return cert, nil
-			},
-		},
+		TLSConfig:    p.TLSConfig,
 	}
 	go p.server.ServeTLS(connPipe, "", "")
 }
@@ -251,20 +243,4 @@ func copyHeaders(dst http.Header, src http.Header) {
 	for k, v := range src {
 		dst[k] = v
 	}
-}
-
-type connPipe struct {
-	conn <-chan net.Conn
-}
-
-func (lis *connPipe) Accept() (net.Conn, error) {
-	return <-lis.conn, nil
-}
-
-func (*connPipe) Close() error {
-	return nil
-}
-
-func (*connPipe) Addr() net.Addr {
-	return nil
 }
