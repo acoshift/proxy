@@ -10,6 +10,12 @@ var tunnelList = []string{
 	"*.icloud.com",
 	"*.adobess.com",
 	"*.apple.com",
+
+	// apps
+	"api.twitter.com",
+	"paypal.com", "*.paypal.com",
+	"kasikornbank.com", "*.kasikornbank.com", "kasikornbankpubliccompany.sc.omtrdc.net",
+	"api.mangarockhd.com",
 }
 
 var tunnelIndex map[string]struct{}
