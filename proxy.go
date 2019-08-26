@@ -19,6 +19,7 @@ import (
 )
 
 type Proxy struct {
+	Skipper     middleware.Skipper
 	PrivateKey  *ecdsa.PrivateKey
 	Certificate *x509.Certificate
 	CacheDir    string // empty string to disable cache
@@ -39,6 +40,9 @@ func (p *Proxy) init() {
 	p.httpsConn = make(chan net.Conn)
 	p.cache.dir = p.CacheDir
 
+	if p.Skipper == nil {
+		p.Skipper = middleware.DefaultSkipper
+	}
 	if p.TLSConfig == nil {
 		p.TLSConfig = &tls.Config{}
 	}
@@ -167,7 +171,7 @@ func (p *Proxy) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 			upstream, err = net.Dial("tcp", host+":"+port)
 		}
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
 		defer upstream.Close()
@@ -181,8 +185,8 @@ func (p *Proxy) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 
 		r.Write(upstream)
 
-		go copyBuffer(downstream, upstream)
-		copyBuffer(upstream, downstream)
+		go copyBuffer(downstream, upstream, 0)
+		copyBuffer(upstream, downstream, 0)
 		return
 	}
 
@@ -210,7 +214,7 @@ func (p *Proxy) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Proxy-Cache-Status", "MISS")
 		copyHeaders(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)
-		_, err = copyBuffer(io.MultiWriter(w, cit), resp.Body)
+		_, err = copyBuffer(io.MultiWriter(w, cit), resp.Body, resp.ContentLength)
 		cit.CloseWithError(err)
 		return
 	}
@@ -218,7 +222,7 @@ func (p *Proxy) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Proxy-Cache-Status", "DISABLE")
 	copyHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
-	copyBuffer(w, resp.Body)
+	copyBuffer(w, resp.Body, resp.ContentLength)
 }
 
 func (p *Proxy) proxyHTTPS(w http.ResponseWriter, r *http.Request) {
@@ -227,6 +231,29 @@ func (p *Proxy) proxyHTTPS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Proxy) tunnelHTTPS(w http.ResponseWriter, r *http.Request) {
+	// is request skipped, stream directly
+	if p.Skipper(r) {
+		upstream, err := net.Dial("tcp", r.RequestURI)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer upstream.Close()
+
+		downstream, wr, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer downstream.Close()
+
+		wr.WriteString("HTTP/1.1 200 OK\n\n")
+		wr.Flush()
+
+		stream(upstream, downstream)
+		return
+	}
+
 	downstream, wr, err := w.(http.Hijacker).Hijack()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -243,4 +270,17 @@ func copyHeaders(dst http.Header, src http.Header) {
 	for k, v := range src {
 		dst[k] = v
 	}
+}
+
+func stream(c1, c2 net.Conn) error {
+	errCh := make(chan error)
+	go func() {
+		_, err := copyBuffer(c1, c2, 0)
+		errCh <- err
+	}()
+	go func() {
+		_, err := copyBuffer(c2, c1, 0)
+		errCh <- err
+	}()
+	return <-errCh
 }

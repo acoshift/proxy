@@ -4,33 +4,43 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"flag"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
-	"os"
+	"strings"
+
+	"github.com/acoshift/middleware"
 
 	"github.com/acoshift/proxy"
 )
 
+var (
+	port      = flag.Int("port", 9000, "Port")
+	noproxy   = flag.String("noproxy", "", "Disable HTTP(S) proxy for given domain/ip")
+	caKey     = flag.String("ca.key", "ca.key", "CA Private Key")
+	caCert    = flag.String("ca.crt", "ca.crt", "CA Certificate")
+	cachePath = flag.String("cache.path", "", "Cache directory path")
+)
+
 func main() {
-	var port = os.Getenv("PORT")
-	if port == "" {
-		port = "9000"
-	}
+	flag.Parse()
 
-	privateKey, err := x509.ParseECPrivateKey(loadPem("ca.key"))
+	privateKey, err := x509.ParseECPrivateKey(loadPem(*caKey))
 	if err != nil {
 		log.Fatal(err)
 	}
-	certificate, err := x509.ParseCertificate(loadPem("ca.crt"))
+	certificate, err := x509.ParseCertificate(loadPem(*caCert))
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	log.Fatal(http.ListenAndServe(":"+port, &proxy.Proxy{
+	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", *port), &proxy.Proxy{
+		Skipper:     noProxySkipper(),
 		PrivateKey:  privateKey,
 		Certificate: certificate,
-		CacheDir:    os.Getenv("CACHE_DIR"),
+		CacheDir:    *cachePath,
 		TLSConfig: &tls.Config{
 			MinVersion: tls.VersionTLS12,
 			CurvePreferences: []tls.CurveID{
@@ -60,4 +70,40 @@ func loadPem(filename string) []byte {
 	}
 	block, _ := pem.Decode(b)
 	return block.Bytes
+}
+
+func noProxySkipper() middleware.Skipper {
+	list := strings.Split(*noproxy, ",")
+
+	// parse := func(x string) interface{} {
+	// 	{
+	// 		ip := net.ParseIP(x)
+	// 		if ip != nil {
+	// 			return ip
+	// 		}
+	// 	}
+	//
+	// 	{
+	// 		_, cidr, _ := net.ParseCIDR(x)
+	// 		if cidr != nil {
+	// 			return cidr
+	// 		}
+	// 	}
+	//
+	// 	return x
+	// }
+	//
+	// var parsedList []interface{}
+	// for _, x := range list {
+	// 	parsedList = append(parsedList, parse(x))
+	// }
+
+	return func(r *http.Request) bool {
+		for _, x := range list {
+			if x == r.Host {
+				return true
+			}
+		}
+		return false
+	}
 }

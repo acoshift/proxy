@@ -228,7 +228,7 @@ func (c *cacheResponseWriter) WriteTo(w http.ResponseWriter) {
 	defer c.Close()
 	copyHeaders(w.Header(), c.resp.Header)
 	w.WriteHeader(c.resp.StatusCode)
-	copyBuffer(w, c.resp.Body)
+	copyBuffer(w, c.resp.Body, c.resp.ContentLength)
 }
 
 func extractHeaderValues(vs []string) map[string]string {
