@@ -19,6 +19,7 @@ import (
 )
 
 type Proxy struct {
+	Logger               *log.Logger
 	Skipper              middleware.Skipper
 	PrivateKey           *ecdsa.PrivateKey
 	Certificate          *x509.Certificate
@@ -47,6 +48,9 @@ func (p *Proxy) init() {
 	}
 	if p.Cache == nil {
 		p.Cache = noCache{}
+	}
+	if p.Logger == nil {
+		p.Logger = log.New(ioutil.Discard, "", 0)
 	}
 
 	p.tr = &http.Transport{
@@ -90,10 +94,10 @@ func (p *Proxy) init() {
 	)
 
 	p.server = &http.Server{
-		ErrorLog:     log.New(ioutil.Discard, "", 0),
+		ErrorLog:     p.Logger,
 		Handler:      mw(http.HandlerFunc(p.proxyHTTPS)),
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  3 * time.Minute,
 		TLSConfig:    p.TLSConfig,
 	}
@@ -162,7 +166,6 @@ func (p *Proxy) skip(r *http.Request) bool {
 			host = host[i+1:]
 		}
 	}
-
 	return p.Skipper(r)
 }
 
@@ -203,6 +206,7 @@ func (p *Proxy) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 			upstream, err = net.Dial("tcp", host+":"+port)
 		}
 		if err != nil {
+			p.Logger.Printf("upstream %s; dial error; %v", r.Host, err)
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
@@ -237,6 +241,7 @@ func (p *Proxy) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := p.tr.RoundTrip(&req)
 	if err != nil {
+		p.Logger.Printf("upstream %s; round trip error; %v", r.Host, err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -265,8 +270,11 @@ func (p *Proxy) proxyHTTPS(w http.ResponseWriter, r *http.Request) {
 func (p *Proxy) tunnelHTTPS(w http.ResponseWriter, r *http.Request) {
 	// is request skipped, stream directly
 	if p.skip(r) {
-		upstream, err := net.Dial("tcp", r.RequestURI)
+		p.Logger.Printf("tunnel %s", r.Host)
+
+		upstream, err := net.Dial("tcp", r.Host)
 		if err != nil {
+			p.Logger.Printf("upstream %s; dial error; %v", r.Host, err)
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
@@ -285,6 +293,8 @@ func (p *Proxy) tunnelHTTPS(w http.ResponseWriter, r *http.Request) {
 		stream(upstream, downstream)
 		return
 	}
+
+	p.Logger.Printf("proxies %s", r.Host)
 
 	downstream, wr, err := w.(http.Hijacker).Hijack()
 	if err != nil {

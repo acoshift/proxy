@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/acoshift/middleware"
@@ -24,6 +25,7 @@ var (
 	caKey                = flag.String("ca.key", "ca.key", "CA Private Key")
 	caCert               = flag.String("ca.crt", "ca.crt", "CA Certificate")
 	cachePath            = flag.String("cache.path", "", "Cache directory path")
+	logEnable            = flag.Bool("log", false, "Enable log")
 )
 
 func main() {
@@ -65,6 +67,9 @@ func main() {
 	}
 	if *cachePath != "" {
 		p.Cache = &proxy.DirCache{Path: *cachePath}
+	}
+	if *logEnable {
+		p.Logger = log.New(os.Stdout, "", log.LstdFlags)
 	}
 
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", *port), p))

@@ -12,9 +12,10 @@ var tunnelList = []string{
 	"*.apple.com",
 
 	// apps
-	"api.twitter.com",
+	"*.twitter.com",
 	"paypal.com", "*.paypal.com",
 	"kasikornbank.com", "*.kasikornbank.com", "kasikornbankpubliccompany.sc.omtrdc.net",
+	"*.crashlytics.com",
 	"api.mangarockhd.com",
 }
 
