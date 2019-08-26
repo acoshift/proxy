@@ -18,11 +18,12 @@ import (
 )
 
 var (
-	port      = flag.Int("port", 9000, "Port")
-	noproxy   = flag.String("noproxy", "", "Disable HTTP(S) proxy for given domain/ip")
-	caKey     = flag.String("ca.key", "ca.key", "CA Private Key")
-	caCert    = flag.String("ca.crt", "ca.crt", "CA Certificate")
-	cachePath = flag.String("cache.path", "", "Cache directory path")
+	port                 = flag.Int("port", 9000, "Port")
+	proxyTunnel          = flag.String("proxy.tunnel", "", "Use tunnel mode for given host")
+	proxyNoDefaultTunnel = flag.Bool("proxy.nodefaulttunnel", false, "Disable default tunnel list")
+	caKey                = flag.String("ca.key", "ca.key", "CA Private Key")
+	caCert               = flag.String("ca.crt", "ca.crt", "CA Certificate")
+	cachePath            = flag.String("cache.path", "", "Cache directory path")
 )
 
 func main() {
@@ -38,10 +39,11 @@ func main() {
 	}
 
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", *port), &proxy.Proxy{
-		Skipper:     noProxySkipper(),
-		PrivateKey:  privateKey,
-		Certificate: certificate,
-		CacheDir:    *cachePath,
+		Skipper:              tunnelSkipper(),
+		DisableDefaultTunnel: *proxyNoDefaultTunnel,
+		PrivateKey:           privateKey,
+		Certificate:          certificate,
+		CacheDir:             *cachePath,
 		TLSConfig: &tls.Config{
 			MinVersion: tls.VersionTLS12,
 			CurvePreferences: []tls.CurveID{
@@ -73,8 +75,8 @@ func loadPem(filename string) []byte {
 	return block.Bytes
 }
 
-func noProxySkipper() middleware.Skipper {
-	list := strings.Split(*noproxy, ",")
+func tunnelSkipper() middleware.Skipper {
+	list := strings.Split(*proxyTunnel, ",")
 
 	// parse := func(x string) interface{} {
 	// 	{

@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,11 +19,12 @@ import (
 )
 
 type Proxy struct {
-	Skipper     middleware.Skipper
-	PrivateKey  *ecdsa.PrivateKey
-	Certificate *x509.Certificate
-	CacheDir    string // empty string to disable cache
-	TLSConfig   *tls.Config
+	Skipper              middleware.Skipper
+	PrivateKey           *ecdsa.PrivateKey
+	Certificate          *x509.Certificate
+	CacheDir             string // empty string to disable cache
+	TLSConfig            *tls.Config
+	DisableDefaultTunnel bool
 
 	once      sync.Once
 	certsLock sync.RWMutex
@@ -139,6 +141,25 @@ func (p *Proxy) skip(r *http.Request) bool {
 	}
 	if ip := net.ParseIP(host); ip != nil {
 		return true
+	}
+
+	if !p.DisableDefaultTunnel {
+		// exact match
+		if _, ok := tunnelIndex[host]; ok {
+			return true
+		}
+		// wildcard match
+		for host != "" {
+			i := strings.Index(host, ".")
+			if i <= 0 {
+				break
+			}
+
+			if _, ok := tunnelIndex["*"+host[i:]]; ok {
+				return true
+			}
+			host = host[i+1:]
+		}
 	}
 
 	return p.Skipper(r)
