@@ -38,12 +38,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", *port), &proxy.Proxy{
+	p := &proxy.Proxy{
 		Skipper:              tunnelSkipper(),
 		DisableDefaultTunnel: *proxyNoDefaultTunnel,
 		PrivateKey:           privateKey,
 		Certificate:          certificate,
-		CacheDir:             *cachePath,
 		TLSConfig: &tls.Config{
 			MinVersion: tls.VersionTLS12,
 			CurvePreferences: []tls.CurveID{
@@ -63,7 +62,12 @@ func main() {
 				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 			},
 		},
-	}))
+	}
+	if *cachePath != "" {
+		p.Cache = &proxy.DirCache{Path: *cachePath}
+	}
+
+	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", *port), p))
 }
 
 func loadPem(filename string) []byte {

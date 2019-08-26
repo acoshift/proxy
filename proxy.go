@@ -22,9 +22,9 @@ type Proxy struct {
 	Skipper              middleware.Skipper
 	PrivateKey           *ecdsa.PrivateKey
 	Certificate          *x509.Certificate
-	CacheDir             string // empty string to disable cache
 	TLSConfig            *tls.Config
 	DisableDefaultTunnel bool
+	Cache                Cache
 
 	once      sync.Once
 	certsLock sync.RWMutex
@@ -33,19 +33,20 @@ type Proxy struct {
 	server    *http.Server
 	tr        *http.Transport
 	httpsConn chan net.Conn
-	cache     cache
 }
 
 func (p *Proxy) init() {
 	p.certs = make(map[string]*tls.Certificate)
 	p.httpsConn = make(chan net.Conn)
-	p.cache.dir = p.CacheDir
 
 	if p.Skipper == nil {
 		p.Skipper = middleware.DefaultSkipper
 	}
 	if p.TLSConfig == nil {
 		p.TLSConfig = &tls.Config{}
+	}
+	if p.Cache == nil {
+		p.Cache = noCache{}
 	}
 
 	p.tr = &http.Transport{
@@ -221,7 +222,7 @@ func (p *Proxy) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if resp := p.cache.get(r); resp != nil {
+	if resp := p.Cache.Get(r); resp != nil {
 		w.Header().Set("X-Proxy-Cache-Status", "HIT")
 		resp.WriteTo(w)
 		return
@@ -241,7 +242,7 @@ func (p *Proxy) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	if cit := p.cache.NewItem(resp); cit != nil {
+	if cit := p.Cache.NewItem(resp); cit != nil {
 		w.Header().Set("X-Proxy-Cache-Status", "MISS")
 		copyHeaders(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)
