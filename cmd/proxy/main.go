@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 
@@ -99,8 +100,12 @@ func noProxySkipper() middleware.Skipper {
 	// }
 
 	return func(r *http.Request) bool {
+		host, _, _ := net.SplitHostPort(r.Host)
+		if host == "" {
+			host = r.Host
+		}
 		for _, x := range list {
-			if x == r.Host {
+			if x == host {
 				return true
 			}
 		}

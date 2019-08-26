@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"io"
 	"io/ioutil"
 	"log"
@@ -111,17 +110,16 @@ func (p *Proxy) issueCert(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
 
 	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	now := time.Now()
-	certBytes, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
-		Subject: pkix.Name{
-			CommonName: info.ServerName,
-		},
+	x509Cert := &x509.Certificate{
 		Issuer:       p.Certificate.Subject,
 		SerialNumber: serial,
 		NotBefore:    now.AddDate(0, 0, -1).UTC(),
 		NotAfter:     now.AddDate(1, 0, 0).UTC(),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		DNSNames:     []string{info.ServerName},
-	}, p.Certificate, &p.PrivateKey.PublicKey, p.PrivateKey)
+	}
+
+	certBytes, err := x509.CreateCertificate(rand.Reader, x509Cert, p.Certificate, &p.PrivateKey.PublicKey, p.PrivateKey)
 	if err != nil {
 		return nil, err
 	}
@@ -132,6 +130,18 @@ func (p *Proxy) issueCert(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
 		Leaf:        p.Certificate,
 	}
 	return cert, nil
+}
+
+func (p *Proxy) skip(r *http.Request) bool {
+	host, _, _ := net.SplitHostPort(r.Host)
+	if host == "" {
+		host = r.Host
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return true
+	}
+
+	return p.Skipper(r)
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -232,7 +242,7 @@ func (p *Proxy) proxyHTTPS(w http.ResponseWriter, r *http.Request) {
 
 func (p *Proxy) tunnelHTTPS(w http.ResponseWriter, r *http.Request) {
 	// is request skipped, stream directly
-	if p.Skipper(r) {
+	if p.skip(r) {
 		upstream, err := net.Dial("tcp", r.RequestURI)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
