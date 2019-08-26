@@ -85,7 +85,7 @@ func (c *cache) NewItem(resp *http.Response) *cacheItem {
 		return nil
 	}
 
-	_, err = fp.WriteString("HTTP/1.1 200 OK\n")
+	_, err = fp.WriteString("HTTP/1.1 200 OK\r\n")
 	if err != nil {
 		return nil
 	}

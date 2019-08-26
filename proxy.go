@@ -257,7 +257,7 @@ func (p *Proxy) tunnelHTTPS(w http.ResponseWriter, r *http.Request) {
 		}
 		defer downstream.Close()
 
-		wr.WriteString("HTTP/1.1 200 OK\n\n")
+		wr.WriteString("HTTP/1.1 200 OK\r\n\r\n")
 		wr.Flush()
 
 		stream(upstream, downstream)
@@ -270,7 +270,7 @@ func (p *Proxy) tunnelHTTPS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wr.WriteString("HTTP/1.1 200 OK\n\n")
+	wr.WriteString("HTTP/1.1 200 OK\r\n\r\n")
 	wr.Flush()
 
 	p.httpsConn <- downstream
