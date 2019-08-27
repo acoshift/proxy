@@ -8,6 +8,7 @@ var tunnelList = []string{
 	// ios
 	"*.mzstatic.com",
 	"*.icloud.com",
+	"*.icloud-content.com",
 	"*.adobess.com",
 	"*.apple.com",
 
