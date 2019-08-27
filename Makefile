@@ -3,3 +3,6 @@ build:
 
 install:
 	go install -tags=cbrotli ./cmd/proxy
+
+docker:
+	docker build -t proxy .
