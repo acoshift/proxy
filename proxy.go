@@ -247,6 +247,8 @@ func (p *Proxy) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
+	resp.Header.Del("Keep-Alive")
+
 	if cit := p.Cache.NewItem(resp); cit != nil {
 		w.Header().Set("X-Proxy-Cache-Status", "MISS")
 		copyHeaders(w.Header(), resp.Header)
