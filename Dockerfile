@@ -1,4 +1,4 @@
-FROM gcr.io/moonrhythm-containers/golang:1.12.9-alpine3.10
+FROM gcr.io/moonrhythm-containers/golang:1.12.9-alpine3.10 as build
 
 ENV GOPROXY=https://proxy.golang.org
 WORKDIR /workspace
@@ -18,5 +18,5 @@ RUN mkdir -p /app
 WORKDIR /app
 ENV GODEBUG tls13=1
 
-COPY proxy ./
+COPY --from=build /workspace/proxy ./
 ENTRYPOINT ["/app/proxy"]

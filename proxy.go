@@ -221,8 +221,7 @@ func (p *Proxy) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 
 		r.Write(upstream)
 
-		go copyBuffer(downstream, upstream, 0)
-		copyBuffer(upstream, downstream, 0)
+		stream(downstream, upstream)
 		return
 	}
 
@@ -238,6 +237,10 @@ func (p *Proxy) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 
 	req.Header.Set("Connection", "keep-alive")
 	req.Header.Del("Accept-Encoding")
+
+	if req.ContentLength == 0 {
+		req.Body = nil
+	}
 
 	resp, err := p.tr.RoundTrip(&req)
 	if err != nil {
@@ -316,14 +319,14 @@ func copyHeaders(dst http.Header, src http.Header) {
 	}
 }
 
-func stream(c1, c2 net.Conn) error {
+func stream(s1, s2 io.ReadWriter) error {
 	errCh := make(chan error)
 	go func() {
-		_, err := copyBuffer(c1, c2, 0)
+		_, err := copyBuffer(s1, s2, 0)
 		errCh <- err
 	}()
 	go func() {
-		_, err := copyBuffer(c2, c1, 0)
+		_, err := copyBuffer(s2, s1, 0)
 		errCh <- err
 	}()
 	return <-errCh
