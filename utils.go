@@ -1,20 +1,35 @@
 package proxy
 
 import (
-	"io/ioutil"
 	"strings"
 )
 
-func loadList(filename string) []string {
-	bs, _ := ioutil.ReadFile(filename)
+type index map[string]struct{}
 
-	var xs []string
-	for _, x := range strings.Split(string(bs), "\n") {
-		x = strings.TrimSpace(x)
-		if x == "" || strings.HasPrefix(x, "#") {
-			continue
-		}
-		xs = append(xs, x)
+func loadIndex(list []string) index {
+	m := make(index)
+	for _, x := range list {
+		m[x] = struct{}{}
 	}
-	return xs
+	return m
+}
+
+func matchHost(index map[string]struct{}, host string) bool {
+	if _, ok := index[host]; ok {
+		return true
+	}
+
+	for host != "" {
+		i := strings.Index(host, ".")
+		if i <= 0 {
+			break
+		}
+
+		if _, ok := index["*"+host[i:]]; ok {
+			return true
+		}
+		host = host[i+1:]
+	}
+
+	return false
 }

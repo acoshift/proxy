@@ -8,24 +8,23 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"strings"
-
-	"github.com/acoshift/middleware"
 
 	"github.com/acoshift/proxy"
 )
 
 var (
-	port                 = flag.Int("port", 9000, "Port")
-	proxyTunnel          = flag.String("proxy.tunnel", "", "Use tunnel mode for given host")
-	proxyNoDefaultTunnel = flag.Bool("proxy.nodefaulttunnel", false, "Disable default tunnel list")
-	caKey                = flag.String("ca.key", "ca.key", "CA Private Key")
-	caCert               = flag.String("ca.crt", "ca.crt", "CA Certificate")
-	cachePath            = flag.String("cache.path", "", "Cache directory path")
-	logEnable            = flag.Bool("log", false, "Enable log")
+	port               = flag.Int("port", 9000, "Port")
+	proxyTunnel        = flag.String("proxy.tunnel", "", "Use tunnel mode for given hosts")
+	proxyTunnelFile    = flag.String("proxy.tunnel.file", "", "Load tunnel from file")
+	proxyBlacklist     = flag.String("proxy.blacklist", "", "Blacklist hosts")
+	proxyBlacklistFile = flag.String("proxy.blacklist.file", "", "Load blacklist from file")
+	caKey              = flag.String("ca.key", "ca.key", "CA Private Key")
+	caCert             = flag.String("ca.crt", "ca.crt", "CA Certificate")
+	cachePath          = flag.String("cache.path", "", "Cache directory path")
+	logEnable          = flag.Bool("log", false, "Enable log")
 )
 
 func main() {
@@ -41,10 +40,8 @@ func main() {
 	}
 
 	p := &proxy.Proxy{
-		Skipper:              tunnelSkipper(),
-		DisableDefaultTunnel: *proxyNoDefaultTunnel,
-		PrivateKey:           privateKey,
-		Certificate:          certificate,
+		PrivateKey:  privateKey,
+		Certificate: certificate,
 		TLSConfig: &tls.Config{
 			MinVersion: tls.VersionTLS12,
 			CurvePreferences: []tls.CurveID{
@@ -64,6 +61,8 @@ func main() {
 				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 			},
 		},
+		BlacklistHosts: append(loadList(*proxyBlacklistFile), splitList(*proxyBlacklist)...),
+		TunnelHosts:    append(loadList(*proxyTunnelFile), splitList(*proxyTunnel)...),
 	}
 	if *cachePath != "" {
 		p.Cache = &proxy.DirCache{Path: *cachePath}
@@ -71,6 +70,7 @@ func main() {
 	if *logEnable {
 		p.Logger = log.New(os.Stdout, "", log.LstdFlags)
 	}
+	p.Init()
 
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", *port), p))
 }
@@ -84,42 +84,29 @@ func loadPem(filename string) []byte {
 	return block.Bytes
 }
 
-func tunnelSkipper() middleware.Skipper {
-	list := strings.Split(*proxyTunnel, ",")
+func loadList(filename string) []string {
+	bs, _ := ioutil.ReadFile(filename)
 
-	// parse := func(x string) interface{} {
-	// 	{
-	// 		ip := net.ParseIP(x)
-	// 		if ip != nil {
-	// 			return ip
-	// 		}
-	// 	}
-	//
-	// 	{
-	// 		_, cidr, _ := net.ParseCIDR(x)
-	// 		if cidr != nil {
-	// 			return cidr
-	// 		}
-	// 	}
-	//
-	// 	return x
-	// }
-	//
-	// var parsedList []interface{}
-	// for _, x := range list {
-	// 	parsedList = append(parsedList, parse(x))
-	// }
-
-	return func(r *http.Request) bool {
-		host, _, _ := net.SplitHostPort(r.Host)
-		if host == "" {
-			host = r.Host
+	var xs []string
+	for _, x := range strings.Split(string(bs), "\n") {
+		x = strings.TrimSpace(x)
+		if x == "" || strings.HasPrefix(x, "#") {
+			continue
 		}
-		for _, x := range list {
-			if x == host {
-				return true
-			}
-		}
-		return false
+		xs = append(xs, x)
 	}
+	return xs
+}
+
+func splitList(list string) []string {
+	var xs []string
+
+	for _, x := range strings.Split(list, ",") {
+		x = strings.TrimSpace(x)
+		if x == "" {
+			continue
+		}
+		xs = append(xs, x)
+	}
+	return xs
 }

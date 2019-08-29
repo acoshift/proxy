@@ -11,7 +11,6 @@ import (
 	"math/big"
 	"net"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -19,30 +18,36 @@ import (
 )
 
 type Proxy struct {
-	Logger               *log.Logger
-	Skipper              middleware.Skipper
-	PrivateKey           *ecdsa.PrivateKey
-	Certificate          *x509.Certificate
-	TLSConfig            *tls.Config
-	DisableDefaultTunnel bool
-	Cache                Cache
+	Logger         *log.Logger
+	PrivateKey     *ecdsa.PrivateKey
+	Certificate    *x509.Certificate
+	TLSConfig      *tls.Config
+	Cache          Cache
+	BlacklistHosts []string
+	TunnelHosts    []string
 
-	once      sync.Once
-	certsLock sync.RWMutex
-	issueLock sync.Mutex
-	certs     map[string]*tls.Certificate
-	server    *http.Server
-	tr        *http.Transport
-	httpsConn chan net.Conn
+	initOnce       sync.Once
+	certsLock      sync.RWMutex
+	issueLock      sync.Mutex
+	certs          map[string]*tls.Certificate
+	server         *http.Server
+	tr             *http.Transport
+	httpsConn      chan net.Conn
+	blacklistIndex index
+	tunnelIndex    index
+}
+
+// Init proxy now instead of lazy init
+func (p *Proxy) Init() {
+	p.initOnce.Do(p.init)
 }
 
 func (p *Proxy) init() {
 	p.certs = make(map[string]*tls.Certificate)
 	p.httpsConn = make(chan net.Conn)
+	p.blacklistIndex = loadIndex(p.BlacklistHosts)
+	p.tunnelIndex = loadIndex(p.TunnelHosts)
 
-	if p.Skipper == nil {
-		p.Skipper = middleware.DefaultSkipper
-	}
 	if p.TLSConfig == nil {
 		p.TLSConfig = &tls.Config{}
 	}
@@ -139,7 +144,7 @@ func (p *Proxy) issueCert(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	return cert, nil
 }
 
-func (p *Proxy) skip(r *http.Request) bool {
+func (p *Proxy) useTunnel(r *http.Request) bool {
 	host, _, _ := net.SplitHostPort(r.Host)
 	if host == "" {
 		host = r.Host
@@ -148,29 +153,21 @@ func (p *Proxy) skip(r *http.Request) bool {
 		return true
 	}
 
-	if !p.DisableDefaultTunnel {
-		// exact match
-		if _, ok := tunnelIndex[host]; ok {
-			return true
-		}
-		// wildcard match
-		for host != "" {
-			i := strings.Index(host, ".")
-			if i <= 0 {
-				break
-			}
-
-			if _, ok := tunnelIndex["*"+host[i:]]; ok {
-				return true
-			}
-			host = host[i+1:]
-		}
+	if matchHost(p.tunnelIndex, host) {
+		return true
 	}
-	return p.Skipper(r)
+
+	return false
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	p.once.Do(p.init)
+	p.initOnce.Do(p.init)
+
+	// blacklist
+	if matchHost(p.blacklistIndex, r.Host) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
 
 	if r.Method == http.MethodConnect {
 		p.tunnelHTTPS(w, r)
@@ -274,7 +271,7 @@ func (p *Proxy) proxyHTTPS(w http.ResponseWriter, r *http.Request) {
 
 func (p *Proxy) tunnelHTTPS(w http.ResponseWriter, r *http.Request) {
 	// is request skipped, stream directly
-	if p.skip(r) {
+	if p.useTunnel(r) {
 		p.Logger.Printf("tunnel %s", r.Host)
 
 		upstream, err := net.Dial("tcp", r.Host)
