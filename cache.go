@@ -24,17 +24,17 @@ const (
 )
 
 type Cache interface {
-	NewItem(resp *http.Response) *CacheItem
-	Get(r *http.Request) *CacheResponseWriter
+	NewItem(resp *http.Response) *CacheWriter
+	Get(r *http.Request) *CacheReader
 }
 
 type noCache struct{}
 
-func (n noCache) NewItem(resp *http.Response) *CacheItem {
+func (n noCache) NewItem(resp *http.Response) *CacheWriter {
 	return nil
 }
 
-func (n noCache) Get(r *http.Request) *CacheResponseWriter {
+func (n noCache) Get(r *http.Request) *CacheReader {
 	return nil
 }
 
@@ -42,7 +42,7 @@ type DirCache struct {
 	Path string
 }
 
-func (c *DirCache) Get(r *http.Request) *CacheResponseWriter {
+func (c *DirCache) Get(r *http.Request) *CacheReader {
 	key := cacheKey(r)
 	fn := cacheFnKey(key)
 	if fn == "" {
@@ -79,7 +79,7 @@ func cacheFnKey(key string) string {
 	return hex.EncodeToString(h[:])
 }
 
-func (c *DirCache) NewItem(resp *http.Response) *CacheItem {
+func (c *DirCache) NewItem(resp *http.Response) *CacheWriter {
 	d := cacheDuration(resp)
 	if d <= 0 {
 		return nil
@@ -91,6 +91,12 @@ func (c *DirCache) NewItem(resp *http.Response) *CacheItem {
 	if err != nil {
 		return nil
 	}
+	closeFp := true
+	defer func() {
+		if closeFp {
+			fp.Close()
+		}
+	}()
 
 	_, err = fp.WriteString("HTTP/1.1 200 OK\r\n")
 	if err != nil {
@@ -115,14 +121,16 @@ func (c *DirCache) NewItem(resp *http.Response) *CacheItem {
 	if err != nil {
 		return nil
 	}
-	return &CacheItem{
+
+	closeFp = false
+	return &CacheWriter{
 		fp:  fp,
 		Key: key,
 		fn:  fn,
 	}
 }
 
-func (c *DirCache) load(r *http.Request, fn string) *CacheResponseWriter {
+func (c *DirCache) load(r *http.Request, fn string) *CacheReader {
 	if c.Path == "" {
 		return nil
 	}
@@ -136,7 +144,7 @@ func (c *DirCache) load(r *http.Request, fn string) *CacheResponseWriter {
 	if err != nil {
 		return nil
 	}
-	return &CacheResponseWriter{
+	return &CacheReader{
 		fp:   fp,
 		resp: resp,
 	}
@@ -200,21 +208,21 @@ func cacheDuration(resp *http.Response) time.Duration {
 	return 0
 }
 
-type CacheItem struct {
+type CacheWriter struct {
 	fp  *os.File
 	fn  string
 	Key string
 }
 
-func (c *CacheItem) Write(p []byte) (n int, err error) {
+func (c *CacheWriter) Write(p []byte) (n int, err error) {
 	return c.fp.Write(p)
 }
 
-func (c *CacheItem) Close() error {
+func (c *CacheWriter) Close() error {
 	return c.fp.Close()
 }
 
-func (c *CacheItem) CloseWithError(err error) {
+func (c *CacheWriter) CloseWithError(err error) {
 	c.Close()
 
 	if err == nil {
@@ -224,17 +232,17 @@ func (c *CacheItem) CloseWithError(err error) {
 	os.Remove(c.fn)
 }
 
-type CacheResponseWriter struct {
+type CacheReader struct {
 	fp   *os.File
 	resp *http.Response
 }
 
-func (c *CacheResponseWriter) Close() error {
+func (c *CacheReader) Close() error {
 	c.resp.Body.Close()
 	return c.fp.Close()
 }
 
-func (c *CacheResponseWriter) WriteTo(w http.ResponseWriter) {
+func (c *CacheReader) WriteTo(w http.ResponseWriter) {
 	defer c.Close()
 	copyHeaders(w.Header(), c.resp.Header)
 	w.WriteHeader(c.resp.StatusCode)
