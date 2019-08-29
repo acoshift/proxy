@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"net"
 	"strings"
 )
 
@@ -15,6 +16,11 @@ func loadIndex(list []string) index {
 }
 
 func matchHost(index map[string]struct{}, host string) bool {
+	h, _, _ := net.SplitHostPort(host)
+	if h != "" {
+		host = h
+	}
+
 	if _, ok := index[host]; ok {
 		return true
 	}
