@@ -80,7 +80,7 @@ func cacheFnKey(key string) string {
 }
 
 func (c *DirCache) NewItem(resp *http.Response) *CacheItem {
-	d := cacheables(resp)
+	d := cacheDuration(resp)
 	if d <= 0 {
 		return nil
 	}
@@ -142,7 +142,7 @@ func (c *DirCache) load(r *http.Request, fn string) *CacheResponseWriter {
 	}
 }
 
-func cacheables(resp *http.Response) time.Duration {
+func cacheDuration(resp *http.Response) time.Duration {
 	if resp.Request.Method != http.MethodGet {
 		return 0
 	}
@@ -178,6 +178,9 @@ func cacheables(resp *http.Response) time.Duration {
 		}
 		if _, ok := x["immutable"]; ok {
 			return maxCacheDuration
+		}
+		if _, ok := x["private"]; ok {
+			return 0
 		}
 		if _, ok := x["no-cache"]; ok {
 			return 0
