@@ -19,4 +19,5 @@ WORKDIR /app
 ENV GODEBUG tls13=1
 
 COPY --from=build /workspace/proxy ./
+COPY ./rootfs/* ./
 ENTRYPOINT ["/app/proxy"]
