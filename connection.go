@@ -35,7 +35,7 @@ func (d *RetryDialer) DialContext(ctx context.Context, network, address string) 
 
 	for i := 0; i <= d.MaxRetries; i++ {
 		conn, err = d.Dialer.DialContext(ctx, network, address)
-		if err == nil {
+		if err == nil || err == context.Canceled || err == context.DeadlineExceeded {
 			break
 		}
 	}
