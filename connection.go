@@ -9,6 +9,10 @@ type connPipe struct {
 	conn <-chan net.Conn
 }
 
+func newConnPipe(conn <-chan net.Conn) net.Listener {
+	return &connPipe{conn}
+}
+
 func (lis *connPipe) Accept() (net.Conn, error) {
 	return <-lis.conn, nil
 }

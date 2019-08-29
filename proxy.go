@@ -67,7 +67,7 @@ func (p *Proxy) init() {
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 
-	connPipe := &connPipe{p.httpsConn}
+	connPipe := newConnPipe(p.httpsConn)
 
 	p.TLSConfig.GetCertificate = func(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
 		p.certsLock.RLock()
