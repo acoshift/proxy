@@ -289,7 +289,7 @@ func (p *Proxy) tunnelHTTPS(w http.ResponseWriter, r *http.Request) {
 		}
 		defer downstream.Close()
 
-		wr.WriteString("HTTP/1.1 200 OK\r\n\r\n")
+		wr.WriteString(proxyConnect)
 		wr.Flush()
 
 		stream(upstream, downstream)
@@ -304,7 +304,7 @@ func (p *Proxy) tunnelHTTPS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wr.WriteString("HTTP/1.1 200 OK\r\n\r\n")
+	wr.WriteString(proxyConnect)
 	wr.Flush()
 
 	p.httpsConn <- downstream
@@ -328,3 +328,5 @@ func stream(s1, s2 io.ReadWriter) error {
 	}()
 	return <-errCh
 }
+
+const proxyConnect = "HTTP/1.1 200 OK\r\n\r\n"
