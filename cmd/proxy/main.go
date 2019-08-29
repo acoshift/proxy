@@ -21,6 +21,7 @@ var (
 	proxyTunnelFile    = flag.String("proxy.tunnel.file", "", "Load tunnel from file")
 	proxyBlacklist     = flag.String("proxy.blacklist", "", "Blacklist hosts")
 	proxyBlacklistFile = flag.String("proxy.blacklist.file", "", "Load blacklist from file")
+	proxyRedirectHTTPS = flag.Bool("proxy.redirecthttps", false, "Redirect HTTP to HTTPS")
 	caKey              = flag.String("ca.key", "ca.key", "CA Private Key")
 	caCert             = flag.String("ca.crt", "ca.crt", "CA Certificate")
 	cachePath          = flag.String("cache.path", "", "Cache directory path")
@@ -63,6 +64,7 @@ func main() {
 		},
 		BlacklistHosts: append(loadList(*proxyBlacklistFile), splitList(*proxyBlacklist)...),
 		TunnelHosts:    append(loadList(*proxyTunnelFile), splitList(*proxyTunnel)...),
+		RedirectHTTPS:  *proxyRedirectHTTPS,
 	}
 	if *cachePath != "" {
 		p.Cache = &proxy.DirCache{Path: *cachePath}

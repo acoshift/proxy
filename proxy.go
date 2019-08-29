@@ -25,6 +25,7 @@ type Proxy struct {
 	Cache          Cache
 	BlacklistHosts []string
 	TunnelHosts    []string
+	RedirectHTTPS  bool
 
 	initOnce       sync.Once
 	certsLock      sync.RWMutex
@@ -171,6 +172,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method == http.MethodConnect {
 		p.tunnelHTTPS(w, r)
+		return
+	}
+
+	if p.RedirectHTTPS {
+		r.URL.Scheme = "https"
+		http.Redirect(w, r, r.URL.String(), http.StatusFound)
 		return
 	}
 
