@@ -113,7 +113,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// blacklist
 	if matchHost(p.blacklistIndex, r.Host) {
-		p.Logger.Printf("upstream %s; blocked", r.Host)
+		p.Logger.Printf("%s; blocked", r.Host)
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -124,6 +124,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if p.RedirectHTTPS {
+		p.Logger.Printf("%s; redirect to https", r.Host)
 		r.URL.Scheme = "https"
 		http.Redirect(w, r, r.URL.String(), http.StatusFound)
 		return
@@ -158,7 +159,7 @@ func (p *Proxy) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 			upstream, err = net.Dial("tcp", host+":"+port)
 		}
 		if err != nil {
-			p.Logger.Printf("upstream %s; dial error; %v", r.Host, err)
+			p.Logger.Printf("%s; dial error; %v", r.Host, err)
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
@@ -199,7 +200,7 @@ func (p *Proxy) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		p.Logger.Printf("upstream %s; round trip error; %v", r.Host, err)
+		p.Logger.Printf("%s; round trip error; %v", r.Host, err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -230,11 +231,11 @@ func (p *Proxy) proxyHTTPS(w http.ResponseWriter, r *http.Request) {
 func (p *Proxy) tunnelHTTPS(w http.ResponseWriter, r *http.Request) {
 	// is request skipped, stream directly
 	if p.useTunnel(r) {
-		p.Logger.Printf("tunnel %s", r.Host)
+		p.Logger.Printf("%s; tunneled", r.Host)
 
 		upstream, err := net.Dial("tcp", r.Host)
 		if err != nil {
-			p.Logger.Printf("upstream %s; dial error; %v", r.Host, err)
+			p.Logger.Printf("%s; dial error; %v", r.Host, err)
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
@@ -254,7 +255,7 @@ func (p *Proxy) tunnelHTTPS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p.Logger.Printf("proxies %s", r.Host)
+	p.Logger.Printf("%s: proxied", r.Host)
 
 	downstream, wr, err := w.(http.Hijacker).Hijack()
 	if err != nil {
