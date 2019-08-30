@@ -17,14 +17,15 @@ import (
 )
 
 type Proxy struct {
-	Logger         *log.Logger
-	PrivateKey     *ecdsa.PrivateKey
-	Certificate    *x509.Certificate
-	TLSConfig      *tls.Config
-	Cache          Cache
-	BlacklistHosts []string
-	TunnelHosts    []string
-	RedirectHTTPS  bool
+	Logger           *log.Logger
+	PrivateKey       *ecdsa.PrivateKey
+	Certificate      *x509.Certificate
+	TLSConfig        *tls.Config
+	Cache            Cache
+	BlacklistHosts   []string
+	TunnelHosts      []string
+	TunnelNotBrowser bool
+	RedirectHTTPS    bool
 
 	initOnce       sync.Once
 	issuer         *issuer
@@ -97,6 +98,10 @@ func (p *Proxy) init() {
 }
 
 func (p *Proxy) useTunnel(r *http.Request) bool {
+	if p.TunnelNotBrowser && !isBrowser(r) {
+		return true
+	}
+
 	host, _, _ := net.SplitHostPort(r.Host)
 	if host == "" {
 		host = r.Host
@@ -127,7 +132,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if p.RedirectHTTPS {
+	// p.RedirectHTTPS && (p.TunnelNotBrowser -> isBrowser(r))
+	if p.RedirectHTTPS && (!p.TunnelNotBrowser || isBrowser(r)) {
 		p.Logger.Printf("%s; redirect to https", r.Host)
 		r.URL.Scheme = "https"
 		http.Redirect(w, r, r.URL.String(), http.StatusFound)

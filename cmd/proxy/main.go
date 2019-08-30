@@ -16,16 +16,17 @@ import (
 )
 
 var (
-	port               = flag.Int("port", 9000, "Port")
-	proxyTunnel        = flag.String("proxy.tunnel", "", "Use tunnel mode for given hosts")
-	proxyTunnelFile    = flag.String("proxy.tunnel.file", "", "Load tunnel from file")
-	proxyBlacklist     = flag.String("proxy.blacklist", "", "Blacklist hosts")
-	proxyBlacklistFile = flag.String("proxy.blacklist.file", "", "Load blacklist from file")
-	proxyRedirectHTTPS = flag.Bool("proxy.redirecthttps", false, "Redirect HTTP to HTTPS")
-	caKey              = flag.String("ca.key", "ca.key", "CA Private Key")
-	caCert             = flag.String("ca.crt", "ca.crt", "CA Certificate")
-	cachePath          = flag.String("cache.path", "", "Cache directory path")
-	logEnable          = flag.Bool("log", false, "Enable log")
+	port                  = flag.Int("port", 9000, "Port")
+	proxyTunnel           = flag.String("proxy.tunnel", "", "Use tunnel mode for given hosts")
+	proxyTunnelFile       = flag.String("proxy.tunnel.file", "", "Load tunnel from file")
+	proxyTunnelNotBrowser = flag.Bool("proxy.tunnel.notbrowser", false, "Use tunnel for app that is not browser")
+	proxyBlacklist        = flag.String("proxy.blacklist", "", "Blacklist hosts")
+	proxyBlacklistFile    = flag.String("proxy.blacklist.file", "", "Load blacklist from file")
+	proxyRedirectHTTPS    = flag.Bool("proxy.redirecthttps", false, "Redirect HTTP to HTTPS")
+	caKey                 = flag.String("ca.key", "ca.key", "CA Private Key")
+	caCert                = flag.String("ca.crt", "ca.crt", "CA Certificate")
+	cachePath             = flag.String("cache.path", "", "Cache directory path")
+	logEnable             = flag.Bool("log", false, "Enable log")
 )
 
 func main() {
@@ -62,9 +63,10 @@ func main() {
 				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 			},
 		},
-		BlacklistHosts: append(loadList(*proxyBlacklistFile), splitList(*proxyBlacklist)...),
-		TunnelHosts:    append(loadList(*proxyTunnelFile), splitList(*proxyTunnel)...),
-		RedirectHTTPS:  *proxyRedirectHTTPS,
+		BlacklistHosts:   append(loadList(*proxyBlacklistFile), splitList(*proxyBlacklist)...),
+		TunnelHosts:      append(loadList(*proxyTunnelFile), splitList(*proxyTunnel)...),
+		TunnelNotBrowser: *proxyTunnelNotBrowser,
+		RedirectHTTPS:    *proxyRedirectHTTPS,
 	}
 	if *cachePath != "" {
 		p.Cache = &proxy.DirCache{Path: *cachePath}

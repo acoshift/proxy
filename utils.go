@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"net"
+	"net/http"
 	"strings"
 )
 
@@ -35,6 +36,15 @@ func matchHost(index map[string]struct{}, host string) bool {
 			return true
 		}
 		host = host[i+1:]
+	}
+
+	return false
+}
+
+func isBrowser(r *http.Request) bool {
+	ua := r.UserAgent()
+	if strings.HasPrefix(ua, "Mozilla") {
+		return true
 	}
 
 	return false
