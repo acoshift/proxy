@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"log"
 	"math/big"
 	"sync"
 	"time"
@@ -15,6 +16,7 @@ type issuer struct {
 	issueLock sync.Mutex
 	certs     map[string]*tls.Certificate
 
+	Logger      *log.Logger
 	PrivateKey  *ecdsa.PrivateKey
 	Certificate *x509.Certificate
 }
@@ -67,9 +69,11 @@ func (s *issuer) issueCert(info *tls.ClientHelloInfo) (*tls.Certificate, error) 
 
 	certBytes, err := x509.CreateCertificate(rand.Reader, x509Cert, s.Certificate, &s.PrivateKey.PublicKey, s.PrivateKey)
 	if err != nil {
+		s.Logger.Printf("%s; issue certificate error; %v", info.ServerName, err)
 		return nil, err
 	}
 
+	s.Logger.Printf("%s; certificate issued", info.ServerName)
 	cert := &tls.Certificate{
 		Certificate: [][]byte{certBytes},
 		PrivateKey:  s.PrivateKey,

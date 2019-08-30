@@ -27,7 +27,7 @@ type Proxy struct {
 	RedirectHTTPS  bool
 
 	initOnce       sync.Once
-	issuer         issuer
+	issuer         *issuer
 	server         *http.Server
 	tr             *http.Transport
 	httpsConn      chan net.Conn
@@ -41,8 +41,11 @@ func (p *Proxy) Init() {
 }
 
 func (p *Proxy) init() {
-	p.issuer.PrivateKey = p.PrivateKey
-	p.issuer.Certificate = p.Certificate
+	p.issuer = &issuer{
+		Logger:      p.Logger,
+		PrivateKey:  p.PrivateKey,
+		Certificate: p.Certificate,
+	}
 	p.issuer.Init()
 
 	p.httpsConn = make(chan net.Conn)
