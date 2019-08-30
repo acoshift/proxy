@@ -41,6 +41,10 @@ func (p *Proxy) Init() {
 }
 
 func (p *Proxy) init() {
+	if p.Logger == nil {
+		p.Logger = log.New(ioutil.Discard, "", 0)
+	}
+
 	p.issuer = &issuer{
 		Logger:      p.Logger,
 		PrivateKey:  p.PrivateKey,
@@ -57,9 +61,6 @@ func (p *Proxy) init() {
 	}
 	if p.Cache == nil {
 		p.Cache = noCache{}
-	}
-	if p.Logger == nil {
-		p.Logger = log.New(ioutil.Discard, "", 0)
 	}
 
 	p.tr = &http.Transport{
