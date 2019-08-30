@@ -3,13 +3,11 @@ package proxy
 import (
 	"context"
 	"crypto/ecdsa"
-	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"io"
 	"io/ioutil"
 	"log"
-	"math/big"
 	"net"
 	"net/http"
 	"sync"
@@ -29,9 +27,7 @@ type Proxy struct {
 	RedirectHTTPS  bool
 
 	initOnce       sync.Once
-	certsLock      sync.RWMutex
-	issueLock      sync.Mutex
-	certs          map[string]*tls.Certificate
+	issuer         issuer
 	server         *http.Server
 	tr             *http.Transport
 	httpsConn      chan net.Conn
@@ -45,7 +41,10 @@ func (p *Proxy) Init() {
 }
 
 func (p *Proxy) init() {
-	p.certs = make(map[string]*tls.Certificate)
+	p.issuer.PrivateKey = p.PrivateKey
+	p.issuer.Certificate = p.Certificate
+	p.issuer.Init()
+
 	p.httpsConn = make(chan net.Conn)
 	p.blacklistIndex = loadIndex(p.BlacklistHosts)
 	p.tunnelIndex = loadIndex(p.TunnelHosts)
@@ -76,25 +75,7 @@ func (p *Proxy) init() {
 
 	connPipe := newConnPipe(p.httpsConn)
 
-	p.TLSConfig.GetCertificate = func(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
-		p.certsLock.RLock()
-		cert := p.certs[info.ServerName]
-		if cert != nil && time.Now().Before(cert.Leaf.NotAfter.AddDate(0, 0, -1)) {
-			p.certsLock.RUnlock()
-			return cert, nil
-		}
-		p.certsLock.RUnlock()
-
-		cert, err := p.issueCert(info)
-		if err != nil {
-			return nil, err
-		}
-
-		p.certsLock.Lock()
-		p.certs[info.ServerName] = cert
-		p.certsLock.Unlock()
-		return cert, nil
-	}
+	p.TLSConfig.GetCertificate = p.issuer.GetCertificate
 
 	mw := middleware.Chain(
 		middleware.Compress(middleware.BrCompressor),
@@ -109,41 +90,6 @@ func (p *Proxy) init() {
 		TLSConfig:    p.TLSConfig,
 	}
 	go p.server.ServeTLS(connPipe, "", "")
-}
-
-func (p *Proxy) issueCert(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
-	p.issueLock.Lock()
-	defer p.issueLock.Unlock()
-
-	p.certsLock.RLock()
-	if cert := p.certs[info.ServerName]; cert != nil {
-		p.certsLock.RUnlock()
-		return cert, nil
-	}
-	p.certsLock.RUnlock()
-
-	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	now := time.Now()
-	x509Cert := &x509.Certificate{
-		Issuer:       p.Certificate.Subject,
-		SerialNumber: serial,
-		NotBefore:    now.AddDate(0, 0, -1).UTC(),
-		NotAfter:     now.AddDate(1, 0, 0).UTC(),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		DNSNames:     []string{info.ServerName},
-	}
-
-	certBytes, err := x509.CreateCertificate(rand.Reader, x509Cert, p.Certificate, &p.PrivateKey.PublicKey, p.PrivateKey)
-	if err != nil {
-		return nil, err
-	}
-
-	cert := &tls.Certificate{
-		Certificate: [][]byte{certBytes},
-		PrivateKey:  p.PrivateKey,
-		Leaf:        p.Certificate,
-	}
-	return cert, nil
 }
 
 func (p *Proxy) useTunnel(r *http.Request) bool {
