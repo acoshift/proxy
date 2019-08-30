@@ -113,6 +113,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// blacklist
 	if matchHost(p.blacklistIndex, r.Host) {
+		p.Logger.Printf("upstream %s; blocked", r.Host)
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
