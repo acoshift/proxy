@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/tls"
@@ -247,6 +248,9 @@ func (p *Proxy) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := p.tr.RoundTrip(&req)
+	if err == context.Canceled {
+		return
+	}
 	if err != nil {
 		p.Logger.Printf("upstream %s; round trip error; %v", r.Host, err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
