@@ -21,6 +21,7 @@ type Proxy struct {
 	PrivateKey       *ecdsa.PrivateKey
 	Certificate      *x509.Certificate
 	TLSConfig        *tls.Config
+	Transport        *http.Transport
 	Cache            Cache
 	BlacklistHosts   []string
 	TunnelHosts      []string
@@ -30,7 +31,6 @@ type Proxy struct {
 	initOnce       sync.Once
 	issuer         *issuer
 	server         *http.Server
-	tr             *http.Transport
 	httpsConn      chan net.Conn
 	blacklistIndex index
 	tunnelIndex    index
@@ -53,33 +53,32 @@ func (p *Proxy) init() {
 	}
 	p.issuer.Init()
 
-	p.httpsConn = make(chan net.Conn)
 	p.blacklistIndex = loadIndex(p.BlacklistHosts)
 	p.tunnelIndex = loadIndex(p.TunnelHosts)
 
-	if p.TLSConfig == nil {
-		p.TLSConfig = &tls.Config{}
-	}
 	if p.Cache == nil {
 		p.Cache = noCache{}
 	}
 
-	p.tr = &http.Transport{
-		DialContext: (&RetryDialer{
-			Dialer: net.Dialer{
-				Timeout:   15 * time.Second,
-				KeepAlive: 30 * time.Second,
-			},
-			MaxRetries: 2,
-		}).DialContext,
-		MaxIdleConnsPerHost:   32,
-		IdleConnTimeout:       5 * time.Minute,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
+	if p.Transport == nil {
+		p.Transport = &http.Transport{
+			DialContext: (&RetryDialer{
+				Dialer: net.Dialer{
+					Timeout:   15 * time.Second,
+					KeepAlive: 30 * time.Second,
+				},
+				MaxRetries: 2,
+			}).DialContext,
+			MaxIdleConnsPerHost:   32,
+			IdleConnTimeout:       5 * time.Minute,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		}
 	}
 
-	connPipe := newConnPipe(p.httpsConn)
-
+	if p.TLSConfig == nil {
+		p.TLSConfig = &tls.Config{}
+	}
 	p.TLSConfig.GetCertificate = p.issuer.GetCertificate
 
 	mw := middleware.Chain(
@@ -94,7 +93,9 @@ func (p *Proxy) init() {
 		IdleTimeout:  3 * time.Minute,
 		TLSConfig:    p.TLSConfig,
 	}
-	go p.server.ServeTLS(connPipe, "", "")
+
+	p.httpsConn = make(chan net.Conn)
+	go p.server.ServeTLS(newConnPipe(p.httpsConn), "", "")
 }
 
 func (p *Proxy) useTunnel(r *http.Request) bool {
@@ -205,7 +206,7 @@ func (p *Proxy) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 		req.Body = nil
 	}
 
-	resp, err := p.tr.RoundTrip(&req)
+	resp, err := p.Transport.RoundTrip(&req)
 	if err == context.Canceled {
 		return
 	}
