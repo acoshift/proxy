@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/acoshift/proxy"
 )
@@ -50,6 +51,19 @@ func (s *DirStorage) Open(key string) io.ReadCloser {
 
 func (s *DirStorage) Remove(key string) {
 	os.Remove(s.filename(key))
+}
+
+func (s *DirStorage) Purge() {
+	filepath.Walk(s.Path, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		syscall.Unlink(path)
+		return nil
+	})
 }
 
 type dirCacheWriter struct {
