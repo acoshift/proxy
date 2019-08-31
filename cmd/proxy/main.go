@@ -69,7 +69,7 @@ func main() {
 		RedirectHTTPS:    *proxyRedirectHTTPS,
 	}
 	if *cachePath != "" {
-		p.Cache = &proxy.DirCache{Path: *cachePath}
+		p.CacheStorage = &proxy.DirCacheStorage{Path: *cachePath}
 	}
 	if *logEnable {
 		p.Logger = log.New(os.Stdout, "", log.LstdFlags)

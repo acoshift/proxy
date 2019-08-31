@@ -22,7 +22,7 @@ type Proxy struct {
 	Certificate      *x509.Certificate
 	TLSConfig        *tls.Config
 	Transport        *http.Transport
-	Cache            Cache
+	CacheStorage     CacheStorage
 	BlacklistHosts   []string
 	TunnelHosts      []string
 	TunnelNotBrowser bool
@@ -34,6 +34,7 @@ type Proxy struct {
 	httpsConn      chan net.Conn
 	blacklistIndex index
 	tunnelIndex    index
+	cache          cacheBackend
 }
 
 // Init proxy now instead of lazy init
@@ -56,9 +57,10 @@ func (p *Proxy) init() {
 	p.blacklistIndex = loadIndex(p.BlacklistHosts)
 	p.tunnelIndex = loadIndex(p.TunnelHosts)
 
-	if p.Cache == nil {
-		p.Cache = noCache{}
+	if p.CacheStorage == nil {
+		p.CacheStorage = noCache{}
 	}
+	p.cache.Store = p.CacheStorage
 
 	if p.Transport == nil {
 		p.Transport = &http.Transport{
@@ -189,7 +191,7 @@ func (p *Proxy) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if resp := p.Cache.Get(r); resp != nil {
+	if resp := p.cache.Get(r); resp != nil {
 		w.Header().Set("X-Proxy-Cache-Status", "HIT")
 		resp.WriteTo(w)
 		return
@@ -219,7 +221,7 @@ func (p *Proxy) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 
 	resp.Header.Del("Keep-Alive")
 
-	if cit := p.Cache.NewItem(resp); cit != nil {
+	if cit := p.cache.NewItem(resp); cit != nil {
 		w.Header().Set("X-Proxy-Cache-Status", "MISS")
 		copyHeaders(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)

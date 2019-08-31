@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path"
@@ -23,37 +25,50 @@ const (
 	maxCacheDuration = 3 * 365 * 24 * time.Hour
 )
 
-type Cache interface {
-	NewItem(resp *http.Response) *CacheWriter
-	Get(r *http.Request) *CacheReader
+type CacheStorage interface {
+	Create(key string) io.WriteCloser
+	Open(key string) io.ReadCloser
+	Remove(key string)
 }
 
 type noCache struct{}
 
-func (n noCache) NewItem(resp *http.Response) *CacheWriter {
+func (n noCache) Create(key string) io.WriteCloser {
 	return nil
 }
 
-func (n noCache) Get(r *http.Request) *CacheReader {
+func (n noCache) Open(key string) io.ReadCloser {
 	return nil
 }
 
-type DirCache struct {
-	Path string
+func (n noCache) Remove(key string) {
+	return
 }
 
-func (c *DirCache) Get(r *http.Request) *CacheReader {
+type cacheBackend struct {
+	Store CacheStorage
+}
+
+func (c *cacheBackend) Get(r *http.Request) *CacheReader {
 	key := cacheKey(r)
-	fn := cacheFnKey(key)
-	if fn == "" {
+	sKey := cacheStoreKey(key)
+	if sKey == "" {
 		return nil
 	}
 
-	it := c.load(r, fn)
-	if it == nil {
+	fp := c.Store.Open(sKey)
+	if fp == nil {
+		return nil
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(fp), r)
+	if err != nil {
 		return nil
 	}
 
+	it := &CacheReader{
+		fp:   fp,
+		resp: resp,
+	}
 	if it.resp.Header.Get("X-Proxy-Key") != key {
 		it.Close()
 		return nil
@@ -70,25 +85,16 @@ func (c *DirCache) Get(r *http.Request) *CacheReader {
 	return it
 }
 
-func cacheKey(r *http.Request) string {
-	return r.URL.String()
-}
-
-func cacheFnKey(key string) string {
-	h := sha256.Sum256([]byte(key))
-	return hex.EncodeToString(h[:])
-}
-
-func (c *DirCache) NewItem(resp *http.Response) *CacheWriter {
+func (c *cacheBackend) NewItem(resp *http.Response) *CacheWriter {
 	d := cacheDuration(resp)
 	if d <= 0 {
 		return nil
 	}
 
 	key := cacheKey(resp.Request)
-	fn := filepath.Join(c.Path, cacheFnKey(key))
-	fp, err := os.Create(fn)
-	if err != nil {
+	sKey := cacheStoreKey(key)
+	fp := c.Store.Create(sKey)
+	if fp == nil {
 		return nil
 	}
 	closeFp := true
@@ -98,7 +104,7 @@ func (c *DirCache) NewItem(resp *http.Response) *CacheWriter {
 		}
 	}()
 
-	_, err = fp.WriteString("HTTP/1.1 200 OK\r\n")
+	_, err := fmt.Fprint(fp, "HTTP/1.1 200 OK\r\n")
 	if err != nil {
 		return nil
 	}
@@ -108,16 +114,16 @@ func (c *DirCache) NewItem(resp *http.Response) *CacheWriter {
 	}
 
 	// proxy storage
-	_, err = fp.WriteString("X-Proxy-Key: " + key + "\n")
+	_, err = fmt.Fprintf(fp, "X-Proxy-Key: %s\n", key)
 	if err != nil {
 		return nil
 	}
-	_, err = fp.WriteString("X-Proxy-Expires: " + time.Now().Add(d).Format(time.RFC3339) + "\n")
+	_, err = fmt.Fprintf(fp, "X-Proxy-Expires: %s\n", time.Now().Add(d).Format(time.RFC3339))
 	if err != nil {
 		return nil
 	}
 
-	_, err = fp.WriteString("\n")
+	_, err = fmt.Fprintf(fp, "\n")
 	if err != nil {
 		return nil
 	}
@@ -126,28 +132,49 @@ func (c *DirCache) NewItem(resp *http.Response) *CacheWriter {
 	return &CacheWriter{
 		fp:  fp,
 		Key: key,
-		fn:  fn,
+		fn:  sKey,
 	}
 }
 
-func (c *DirCache) load(r *http.Request, fn string) *CacheReader {
-	if c.Path == "" {
-		return nil
-	}
+type DirCacheStorage struct {
+	Path string
+}
 
-	fp, err := os.Open(filepath.Join(c.Path, fn))
+func (c *DirCacheStorage) filename(key string) string {
+	return filepath.Join(c.Path, key)
+}
+
+func (c *DirCacheStorage) Create(key string) io.WriteCloser {
+	fp, err := os.Create(c.filename(key))
 	if err != nil {
 		return nil
 	}
+	return fp
+}
 
-	resp, err := http.ReadResponse(bufio.NewReader(fp), r)
+func (c *DirCacheStorage) Open(key string) io.ReadCloser {
+	if key == "" || c.Path == "" {
+		return nil
+	}
+
+	fp, err := os.Open(c.filename(key))
 	if err != nil {
 		return nil
 	}
-	return &CacheReader{
-		fp:   fp,
-		resp: resp,
-	}
+	return fp
+}
+
+func (c *DirCacheStorage) Remove(key string) {
+	os.Remove(c.filename(key))
+}
+
+func cacheKey(r *http.Request) string {
+	return r.URL.String()
+}
+
+func cacheStoreKey(key string) string {
+	h := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(h[:])
 }
 
 func cacheDuration(resp *http.Response) time.Duration {
@@ -209,7 +236,7 @@ func cacheDuration(resp *http.Response) time.Duration {
 }
 
 type CacheWriter struct {
-	fp  *os.File
+	fp  io.WriteCloser
 	fn  string
 	Key string
 }
@@ -233,7 +260,7 @@ func (c *CacheWriter) CloseWithError(err error) {
 }
 
 type CacheReader struct {
-	fp   *os.File
+	fp   io.ReadCloser
 	resp *http.Response
 }
 
