@@ -9,15 +9,16 @@ import (
 	"github.com/acoshift/proxy"
 )
 
-type DirStorage struct {
+// Dir stores cache in directory
+type Dir struct {
 	Path string
 }
 
-func (s *DirStorage) filename(key string) string {
+func (s *Dir) filename(key string) string {
 	return filepath.Join(s.Path, key)
 }
 
-func (s *DirStorage) Create(key string) proxy.CacheWriter {
+func (s *Dir) Create(key string) proxy.CacheWriter {
 	if key == "" {
 		return nil
 	}
@@ -31,13 +32,13 @@ func (s *DirStorage) Create(key string) proxy.CacheWriter {
 	if err != nil {
 		return nil
 	}
-	return &dirCacheWriter{
+	return &fileWriter{
 		fp: fp,
 		fn: fn,
 	}
 }
 
-func (s *DirStorage) Open(key string) io.ReadCloser {
+func (s *Dir) Open(key string) io.ReadCloser {
 	if key == "" {
 		return nil
 	}
@@ -49,11 +50,11 @@ func (s *DirStorage) Open(key string) io.ReadCloser {
 	return fp
 }
 
-func (s *DirStorage) Remove(key string) {
+func (s *Dir) Remove(key string) {
 	os.Remove(s.filename(key))
 }
 
-func (s *DirStorage) Purge() {
+func (s *Dir) Purge() {
 	filepath.Walk(s.Path, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -66,19 +67,19 @@ func (s *DirStorage) Purge() {
 	})
 }
 
-type dirCacheWriter struct {
+type fileWriter struct {
 	fp *os.File
 	fn string
 }
 
-func (w *dirCacheWriter) Write(p []byte) (n int, err error) {
+func (w *fileWriter) Write(p []byte) (n int, err error) {
 	return w.fp.Write(p)
 }
 
-func (w *dirCacheWriter) Close() error {
+func (w *fileWriter) Close() error {
 	return w.fp.Close()
 }
 
-func (w *dirCacheWriter) Remove() error {
+func (w *fileWriter) Remove() error {
 	return os.Remove(w.fn)
 }

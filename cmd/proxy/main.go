@@ -26,7 +26,8 @@ var (
 	proxyRedirectHTTPS    = flag.Bool("proxy.redirecthttps", false, "Redirect HTTP to HTTPS")
 	caKey                 = flag.String("ca.key", "ca.key", "CA Private Key")
 	caCert                = flag.String("ca.crt", "ca.crt", "CA Certificate")
-	cachePath             = flag.String("cache.path", "", "Cache directory path")
+	cacheStorage          = flag.String("cache", "", "Cache storage backend. ex. memory, dir")
+	cacheDirPath          = flag.String("cache.dir.path", "", "Cache directory path")
 	logEnable             = flag.Bool("log", false, "Enable log")
 )
 
@@ -69,8 +70,11 @@ func main() {
 		TunnelNotBrowser: *proxyTunnelNotBrowser,
 		RedirectHTTPS:    *proxyRedirectHTTPS,
 	}
-	if *cachePath != "" {
-		p.CacheStorage = &cache.DirStorage{Path: *cachePath}
+	switch *cacheStorage {
+	case "dir":
+		p.CacheStorage = &cache.Dir{Path: *cacheDirPath}
+	case "memory":
+		p.CacheStorage = &cache.Memory{}
 	}
 	if *logEnable {
 		p.Logger = log.New(os.Stdout, "", log.LstdFlags)
