@@ -44,11 +44,11 @@ func (s *issuer) GetCertificate(info *tls.ClientHelloInfo) (*tls.Certificate, er
 		b, _ := ioutil.ReadAll(fp)
 		fp.Close()
 		cert, _ := x509.ParseCertificate(b)
-		if cert != nil {
+		if cert != nil && time.Now().Before(cert.NotAfter.AddDate(0, 0, -1)) {
 			cert := &tls.Certificate{
 				Certificate: [][]byte{b},
 				PrivateKey:  s.PrivateKey,
-				Leaf:        s.Certificate,
+				Leaf:        cert,
 			}
 			s.certsLock.Lock()
 			s.certs[info.ServerName] = cert
@@ -107,6 +107,6 @@ func (s *issuer) issueCert(info *tls.ClientHelloInfo) (*tls.Certificate, error) 
 	return &tls.Certificate{
 		Certificate: [][]byte{certBytes},
 		PrivateKey:  s.PrivateKey,
-		Leaf:        s.Certificate,
+		Leaf:        x509Cert,
 	}, nil
 }
