@@ -17,6 +17,7 @@ import (
 
 var proxyCacheHop = []string{
 	"X-Proxy-Key",
+	"X-Proxy-Created",
 	"X-Proxy-Expires",
 }
 
@@ -26,14 +27,19 @@ const (
 )
 
 type CacheStorage interface {
-	Create(key string) io.WriteCloser
+	Create(key string) CacheWriter
 	Open(key string) io.ReadCloser
 	Remove(key string)
 }
 
+type CacheWriter interface {
+	io.WriteCloser
+	Remove() error
+}
+
 type noCache struct{}
 
-func (n noCache) Create(key string) io.WriteCloser {
+func (n noCache) Create(key string) CacheWriter {
 	return nil
 }
 
@@ -49,7 +55,7 @@ type cacheBackend struct {
 	Store CacheStorage
 }
 
-func (c *cacheBackend) Get(r *http.Request) *CacheReader {
+func (c *cacheBackend) Get(r *http.Request) *cacheResponseReader {
 	key := cacheKey(r)
 	sKey := cacheStoreKey(key)
 	if sKey == "" {
@@ -65,15 +71,26 @@ func (c *cacheBackend) Get(r *http.Request) *CacheReader {
 		return nil
 	}
 
-	it := &CacheReader{
+	it := &cacheResponseReader{
 		fp:   fp,
 		resp: resp,
 	}
+
+	// hash collision
 	if it.resp.Header.Get("X-Proxy-Key") != key {
 		it.Close()
 		return nil
 	}
+
+	// add age header
+	created, _ := time.Parse(time.RFC3339, it.resp.Header.Get("X-Proxy-Created"))
+	if !created.IsZero() {
+		it.resp.Header.Set("X-Proxy-Cache-Age", strconv.FormatInt(int64(time.Since(created).Seconds()), 10))
+	}
+
+	// check expires
 	if exp, _ := time.Parse(time.RFC3339, it.resp.Header.Get("X-Proxy-Expires")); time.Now().After(exp) {
+		// TODO: check can use stale
 		it.Close()
 		return nil
 	}
@@ -85,7 +102,7 @@ func (c *cacheBackend) Get(r *http.Request) *CacheReader {
 	return it
 }
 
-func (c *cacheBackend) NewItem(resp *http.Response) *CacheWriter {
+func (c *cacheBackend) NewWriter(resp *http.Response) *cacheResponseWriter {
 	d := cacheDuration(resp)
 	if d <= 0 {
 		return nil
@@ -113,27 +130,25 @@ func (c *cacheBackend) NewItem(resp *http.Response) *CacheWriter {
 		return nil
 	}
 
-	// proxy storage
-	_, err = fmt.Fprintf(fp, "X-Proxy-Key: %s\n", key)
-	if err != nil {
-		return nil
-	}
-	_, err = fmt.Fprintf(fp, "X-Proxy-Expires: %s\n", time.Now().Add(d).Format(time.RFC3339))
+	// proxy storage header
+	now := time.Now()
+
+	sh := make(http.Header)
+	sh.Set("X-Proxy-Key", key)
+	sh.Set("X-Proxy-Created", now.Format(time.RFC3339))
+	sh.Set("X-Proxy-Expires", now.Add(d).Format(time.RFC3339))
+	err = sh.Write(fp)
 	if err != nil {
 		return nil
 	}
 
-	_, err = fmt.Fprintf(fp, "\n")
+	_, err = fmt.Fprintf(fp, "\r\n")
 	if err != nil {
 		return nil
 	}
 
 	closeFp = false
-	return &CacheWriter{
-		fp:  fp,
-		Key: key,
-		fn:  sKey,
-	}
+	return &cacheResponseWriter{CacheWriter: fp}
 }
 
 type DirCacheStorage struct {
@@ -144,12 +159,16 @@ func (c *DirCacheStorage) filename(key string) string {
 	return filepath.Join(c.Path, key)
 }
 
-func (c *DirCacheStorage) Create(key string) io.WriteCloser {
-	fp, err := os.Create(c.filename(key))
+func (c *DirCacheStorage) Create(key string) CacheWriter {
+	fn := c.filename(key)
+	fp, err := os.Create(fn)
 	if err != nil {
 		return nil
 	}
-	return fp
+	return &dirCacheWriter{
+		fp: fp,
+		fn: fn,
+	}
 }
 
 func (c *DirCacheStorage) Open(key string) io.ReadCloser {
@@ -166,6 +185,23 @@ func (c *DirCacheStorage) Open(key string) io.ReadCloser {
 
 func (c *DirCacheStorage) Remove(key string) {
 	os.Remove(c.filename(key))
+}
+
+type dirCacheWriter struct {
+	fp *os.File
+	fn string
+}
+
+func (w *dirCacheWriter) Write(p []byte) (n int, err error) {
+	return w.fp.Write(p)
+}
+
+func (w *dirCacheWriter) Close() error {
+	return w.fp.Close()
+}
+
+func (w *dirCacheWriter) Remove() error {
+	return os.Remove(w.fn)
 }
 
 func cacheKey(r *http.Request) string {
@@ -235,41 +271,31 @@ func cacheDuration(resp *http.Response) time.Duration {
 	return 0
 }
 
-type CacheWriter struct {
-	fp  io.WriteCloser
-	fn  string
-	Key string
+type cacheResponseWriter struct {
+	CacheWriter
 }
 
-func (c *CacheWriter) Write(p []byte) (n int, err error) {
-	return c.fp.Write(p)
-}
-
-func (c *CacheWriter) Close() error {
-	return c.fp.Close()
-}
-
-func (c *CacheWriter) CloseWithError(err error) {
+func (c *cacheResponseWriter) CloseWithError(err error) {
 	c.Close()
 
 	if err == nil {
 		return
 	}
 
-	os.Remove(c.fn)
+	c.CacheWriter.Remove()
 }
 
-type CacheReader struct {
+type cacheResponseReader struct {
 	fp   io.ReadCloser
 	resp *http.Response
 }
 
-func (c *CacheReader) Close() error {
+func (c *cacheResponseReader) Close() error {
 	c.resp.Body.Close()
 	return c.fp.Close()
 }
 
-func (c *CacheReader) WriteTo(w http.ResponseWriter) {
+func (c *cacheResponseReader) WriteTo(w http.ResponseWriter) {
 	defer c.Close()
 	copyHeaders(w.Header(), c.resp.Header)
 	w.WriteHeader(c.resp.StatusCode)
@@ -285,7 +311,6 @@ func extractHeaderValues(vs []string) map[string]string {
 			var p string
 			if len(ps) == 2 {
 				x, p = ps[0], ps[1]
-			} else {
 			}
 			x = strings.ToLower(x)
 			xs[x] = p

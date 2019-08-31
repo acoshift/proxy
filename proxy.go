@@ -221,17 +221,18 @@ func (p *Proxy) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 
 	resp.Header.Del("Keep-Alive")
 
-	if cit := p.cache.NewItem(resp); cit != nil {
-		w.Header().Set("X-Proxy-Cache-Status", "MISS")
+	if cw := p.cache.NewWriter(resp); cw != nil {
 		copyHeaders(w.Header(), resp.Header)
+		w.Header().Set("X-Proxy-Cache-Status", "MISS")
 		w.WriteHeader(resp.StatusCode)
-		_, err = copyBuffer(io.MultiWriter(w, cit), resp.Body, resp.ContentLength)
-		cit.CloseWithError(err)
+
+		_, err = copyBuffer(io.MultiWriter(w, cw), resp.Body, resp.ContentLength)
+		cw.CloseWithError(err)
 		return
 	}
 
-	w.Header().Set("X-Proxy-Cache-Status", "DISABLE")
 	copyHeaders(w.Header(), resp.Header)
+	w.Header().Set("X-Proxy-Cache-Status", "DISABLE")
 	w.WriteHeader(resp.StatusCode)
 	copyBuffer(w, resp.Body, resp.ContentLength)
 }
