@@ -7,9 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -103,6 +101,10 @@ func (c *cacheBackend) Get(r *http.Request) *http.Response {
 }
 
 func (c *cacheBackend) NewWriter(resp *http.Response) *cacheResponseWriter {
+	if !cacheables(resp) {
+		return nil
+	}
+
 	d := cacheDuration(resp)
 	if d <= 0 {
 		return nil
@@ -128,59 +130,6 @@ func (c *cacheBackend) NewWriter(resp *http.Response) *cacheResponseWriter {
 	}
 }
 
-type DirCacheStorage struct {
-	Path string
-}
-
-func (c *DirCacheStorage) filename(key string) string {
-	return filepath.Join(c.Path, key)
-}
-
-func (c *DirCacheStorage) Create(key string) CacheWriter {
-	fn := c.filename(key)
-	fp, err := os.Create(fn)
-	if err != nil {
-		return nil
-	}
-	return &dirCacheWriter{
-		fp: fp,
-		fn: fn,
-	}
-}
-
-func (c *DirCacheStorage) Open(key string) io.ReadCloser {
-	if key == "" || c.Path == "" {
-		return nil
-	}
-
-	fp, err := os.Open(c.filename(key))
-	if err != nil {
-		return nil
-	}
-	return fp
-}
-
-func (c *DirCacheStorage) Remove(key string) {
-	os.Remove(c.filename(key))
-}
-
-type dirCacheWriter struct {
-	fp *os.File
-	fn string
-}
-
-func (w *dirCacheWriter) Write(p []byte) (n int, err error) {
-	return w.fp.Write(p)
-}
-
-func (w *dirCacheWriter) Close() error {
-	return w.fp.Close()
-}
-
-func (w *dirCacheWriter) Remove() error {
-	return os.Remove(w.fn)
-}
-
 func cacheKey(r *http.Request) string {
 	return r.URL.String()
 }
@@ -190,66 +139,84 @@ func cacheStoreKey(key string) string {
 	return hex.EncodeToString(h[:])
 }
 
-func cacheDuration(resp *http.Response) time.Duration {
-	if resp.Request.Method != http.MethodGet {
-		return 0
+func cacheables(resp *http.Response) bool {
+	// request
+	r := resp.Request
+	if r.Method != http.MethodGet {
+		return false
 	}
+	if r.Header.Get("Authorization") != "" {
+		return false
+	}
+
+	// response
 	if resp.StatusCode != http.StatusOK {
-		return 0
+		return false
 	}
-
 	if resp.Header.Get("Set-Cookie") != "" {
-		return 0
+		return false
 	}
-
 	if resp.ContentLength > maxCacheItemSize {
+		return false
+	}
+
+	vary := extractHeaderValues(resp.Header["Vary"])
+
+	// do not cache for low hit rate vary
+	if _, ok := vary["*"]; ok {
+		return false
+	}
+	if _, ok := vary["cookie"]; ok {
+		return false
+	}
+	if _, ok := vary["user-agent"]; ok {
+		return false
+	}
+	if _, ok := vary["referer"]; ok {
+		return false
+	}
+
+	delete(vary, "accept-encoding")
+
+	// do not support cache complex vary
+	if len(vary) > 0 {
+		return false
+	}
+
+	return true
+}
+
+func cacheDuration(resp *http.Response) time.Duration {
+	cc := extractHeaderValues(resp.Header["Cache-Control"])
+	if len(cc) == 0 {
+		if alwaysCacheExt[path.Ext(resp.Request.URL.Path)] {
+			return 6 * time.Hour
+		}
+
+		return 0
+	}
+	if _, ok := cc["immutable"]; ok {
+		return maxCacheDuration
+	}
+	if _, ok := cc["private"]; ok {
+		return 0
+	}
+	if _, ok := cc["no-cache"]; ok {
+		return 0
+	}
+	if _, ok := cc["no-store"]; ok {
 		return 0
 	}
 
-	if resp.Request.Header.Get("Authorization") != "" {
+	maxAgeStr := cc["max-age"]
+	if maxAgeStr == "" {
 		return 0
 	}
-
-	{
-		// do not support cache complex vary
-		x := extractHeaderValues(resp.Header["Vary"])
-		delete(x, "accept-encoding")
-		if len(x) > 0 {
-			return 0
-		}
+	maxAge, _ := strconv.ParseInt(maxAgeStr, 10, 64)
+	if maxAge <= 0 {
+		return 0
 	}
-
-	{
-		x := extractHeaderValues(resp.Header["Cache-Control"])
-		if len(x) == 0 {
-			if alwaysCacheExt[path.Ext(resp.Request.URL.Path)] {
-				return 6 * time.Hour
-			}
-
-			return 0
-		}
-		if _, ok := x["immutable"]; ok {
-			return maxCacheDuration
-		}
-		if _, ok := x["private"]; ok {
-			return 0
-		}
-		if _, ok := x["no-cache"]; ok {
-			return 0
-		}
-		if _, ok := x["no-store"]; ok {
-			return 0
-		}
-		if p := x["max-age"]; p != "" {
-			maxAge, _ := strconv.ParseInt(p, 10, 64)
-			if maxAge <= 0 {
-				return 0
-			}
-			return time.Duration(maxAge) * time.Second
-		}
-	}
-
-	return 0
+	return time.Duration(maxAge) * time.Second
 }
 
 type cacheResponseWriter struct {

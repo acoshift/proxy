@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/acoshift/proxy"
+	"github.com/acoshift/proxy/cache"
 )
 
 var (
@@ -69,7 +70,7 @@ func main() {
 		RedirectHTTPS:    *proxyRedirectHTTPS,
 	}
 	if *cachePath != "" {
-		p.CacheStorage = &proxy.DirCacheStorage{Path: *cachePath}
+		p.CacheStorage = &cache.DirStorage{Path: *cachePath}
 	}
 	if *logEnable {
 		p.Logger = log.New(os.Stdout, "", log.LstdFlags)
