@@ -12,13 +12,21 @@ type DirStorage struct {
 	Path string
 }
 
-func (c *DirStorage) filename(key string) string {
-	return filepath.Join(c.Path, key)
+func (s *DirStorage) filename(key string) string {
+	return filepath.Join(s.Path, key)
 }
 
-func (c *DirStorage) Create(key string) proxy.CacheWriter {
-	fn := c.filename(key)
+func (s *DirStorage) Create(key string) proxy.CacheWriter {
+	if key == "" {
+		return nil
+	}
+
+	fn := s.filename(key)
 	fp, err := os.Create(fn)
+	if os.IsNotExist(err) {
+		os.MkdirAll(filepath.Dir(fn), 0666)
+		fp, err = os.Create(fn)
+	}
 	if err != nil {
 		return nil
 	}
@@ -28,20 +36,20 @@ func (c *DirStorage) Create(key string) proxy.CacheWriter {
 	}
 }
 
-func (c *DirStorage) Open(key string) io.ReadCloser {
-	if key == "" || c.Path == "" {
+func (s *DirStorage) Open(key string) io.ReadCloser {
+	if key == "" {
 		return nil
 	}
 
-	fp, err := os.Open(c.filename(key))
+	fp, err := os.Open(s.filename(key))
 	if err != nil {
 		return nil
 	}
 	return fp
 }
 
-func (c *DirStorage) Remove(key string) {
-	os.Remove(c.filename(key))
+func (s *DirStorage) Remove(key string) {
+	os.Remove(s.filename(key))
 }
 
 type dirCacheWriter struct {
