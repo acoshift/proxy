@@ -1,10 +1,12 @@
 package proxy
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"io/ioutil"
 	"log"
 	"math/big"
 	"sync"
@@ -19,6 +21,7 @@ type issuer struct {
 	Logger      *log.Logger
 	PrivateKey  *ecdsa.PrivateKey
 	Certificate *x509.Certificate
+	Cache       CacheStorage
 }
 
 func (s *issuer) Init() {
@@ -26,6 +29,7 @@ func (s *issuer) Init() {
 }
 
 func (s *issuer) GetCertificate(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	// memory
 	s.certsLock.RLock()
 	cert := s.certs[info.ServerName]
 	if cert != nil && time.Now().Before(cert.Leaf.NotAfter.AddDate(0, 0, -1)) {
@@ -34,9 +38,35 @@ func (s *issuer) GetCertificate(info *tls.ClientHelloInfo) (*tls.Certificate, er
 	}
 	s.certsLock.RUnlock()
 
+	// disk
+	fnKey := "certs/" + cacheStoreKey(info.ServerName)
+	if fp := s.Cache.Open(fnKey); fp != nil {
+		b, _ := ioutil.ReadAll(fp)
+		fp.Close()
+		cert, _ := x509.ParseCertificate(b)
+		if cert != nil {
+			cert := &tls.Certificate{
+				Certificate: [][]byte{b},
+				PrivateKey:  s.PrivateKey,
+				Leaf:        s.Certificate,
+			}
+			s.certsLock.Lock()
+			s.certs[info.ServerName] = cert
+			s.certsLock.Unlock()
+			s.Logger.Printf("%s; certificate loaded", info.ServerName)
+			return cert, nil
+		}
+	}
+
 	cert, err := s.issueCert(info)
 	if err != nil {
 		return nil, err
+	}
+
+	// save
+	if fp := s.Cache.Create(fnKey); fp != nil {
+		copyBuffer(fp, bytes.NewReader(cert.Certificate[0]), 0)
+		fp.Close()
 	}
 
 	s.certsLock.Lock()
@@ -74,10 +104,9 @@ func (s *issuer) issueCert(info *tls.ClientHelloInfo) (*tls.Certificate, error) 
 	}
 
 	s.Logger.Printf("%s; certificate issued", info.ServerName)
-	cert := &tls.Certificate{
+	return &tls.Certificate{
 		Certificate: [][]byte{certBytes},
 		PrivateKey:  s.PrivateKey,
 		Leaf:        s.Certificate,
-	}
-	return cert, nil
+	}, nil
 }

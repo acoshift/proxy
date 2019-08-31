@@ -46,20 +46,21 @@ func (p *Proxy) init() {
 		p.Logger = log.New(ioutil.Discard, "", 0)
 	}
 
+	if p.CacheStorage == nil {
+		p.CacheStorage = noCache{}
+	}
+	p.cache.Store = p.CacheStorage
+
 	p.issuer = &issuer{
 		Logger:      p.Logger,
 		PrivateKey:  p.PrivateKey,
 		Certificate: p.Certificate,
+		Cache:       p.CacheStorage,
 	}
 	p.issuer.Init()
 
 	p.blacklistIndex = loadIndex(p.BlacklistHosts)
 	p.tunnelIndex = loadIndex(p.TunnelHosts)
-
-	if p.CacheStorage == nil {
-		p.CacheStorage = noCache{}
-	}
-	p.cache.Store = p.CacheStorage
 
 	if p.Transport == nil {
 		p.Transport = &http.Transport{

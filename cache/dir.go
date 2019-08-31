@@ -24,7 +24,7 @@ func (s *DirStorage) Create(key string) proxy.CacheWriter {
 	fn := s.filename(key)
 	fp, err := os.Create(fn)
 	if os.IsNotExist(err) {
-		os.MkdirAll(filepath.Dir(fn), 0666)
+		os.MkdirAll(filepath.Dir(fn), 0755)
 		fp, err = os.Create(fn)
 	}
 	if err != nil {
