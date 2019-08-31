@@ -13,5 +13,5 @@ run:
 		-cache.path=$(HOME)/.proxy/cache \
 		-proxy.tunnel.file=$(HOME)/.proxy/tunnels \
 		-proxy.tunnel.notbrowser \
-		-proxy.blacklist.file=$(HOME)/.proxy.blacklists \
+		-proxy.blacklist.file=$(HOME)/.proxy/blacklists \
 		-log
