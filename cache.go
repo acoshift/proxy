@@ -229,6 +229,10 @@ func cacheDuration(resp *http.Response) time.Duration {
 		return 0
 	}
 
+	if resp.Request.Header.Get("Authorization") != "" {
+		return 0
+	}
+
 	{
 		// do not support cache complex vary
 		x := extractHeaderValues(resp.Header["Vary"])
