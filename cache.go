@@ -55,7 +55,7 @@ type cacheBackend struct {
 	Store CacheStorage
 }
 
-func (c *cacheBackend) Get(r *http.Request) *cacheResponseReader {
+func (c *cacheBackend) Get(r *http.Request) *http.Response {
 	key := cacheKey(r)
 	sKey := cacheStoreKey(key)
 	if sKey == "" {
@@ -70,36 +70,36 @@ func (c *cacheBackend) Get(r *http.Request) *cacheResponseReader {
 	if err != nil {
 		return nil
 	}
-
-	it := &cacheResponseReader{
-		fp:   fp,
-		resp: resp,
-	}
+	respBody := resp.Body
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{respBody, multiCloser{respBody, fp}}
 
 	// hash collision
-	if it.resp.Header.Get("X-Proxy-Key") != key {
-		it.Close()
+	if resp.Header.Get("X-Proxy-Key") != key {
+		resp.Body.Close()
 		return nil
 	}
 
 	// add age header
-	created, _ := time.Parse(time.RFC3339, it.resp.Header.Get("X-Proxy-Created"))
+	created, _ := time.Parse(time.RFC3339, resp.Header.Get("X-Proxy-Created"))
 	if !created.IsZero() {
-		it.resp.Header.Set("X-Proxy-Cache-Age", strconv.FormatInt(int64(time.Since(created).Seconds()), 10))
+		resp.Header.Set("X-Proxy-Cache-Age", strconv.FormatInt(int64(time.Since(created).Seconds()), 10))
 	}
 
 	// check expires
-	if exp, _ := time.Parse(time.RFC3339, it.resp.Header.Get("X-Proxy-Expires")); time.Now().After(exp) {
+	if exp, _ := time.Parse(time.RFC3339, resp.Header.Get("X-Proxy-Expires")); time.Now().After(exp) {
 		// TODO: check can use stale
-		it.Close()
+		resp.Body.Close()
 		return nil
 	}
 
 	for _, k := range proxyCacheHop {
-		it.resp.Header.Del(k)
+		resp.Header.Del(k)
 	}
 
-	return it
+	return resp
 }
 
 func (c *cacheBackend) NewWriter(resp *http.Response) *cacheResponseWriter {
@@ -114,41 +114,18 @@ func (c *cacheBackend) NewWriter(resp *http.Response) *cacheResponseWriter {
 	if fp == nil {
 		return nil
 	}
-	closeFp := true
-	defer func() {
-		if closeFp {
-			fp.Close()
-		}
-	}()
-
-	_, err := fmt.Fprint(fp, "HTTP/1.1 200 OK\r\n")
-	if err != nil {
-		return nil
-	}
-	err = resp.Header.Write(fp)
-	if err != nil {
-		return nil
-	}
 
 	// proxy storage header
 	now := time.Now()
-
 	sh := make(http.Header)
 	sh.Set("X-Proxy-Key", key)
 	sh.Set("X-Proxy-Created", now.Format(time.RFC3339))
 	sh.Set("X-Proxy-Expires", now.Add(d).Format(time.RFC3339))
-	err = sh.Write(fp)
-	if err != nil {
-		return nil
-	}
 
-	_, err = fmt.Fprintf(fp, "\r\n")
-	if err != nil {
-		return nil
+	return &cacheResponseWriter{
+		w:      fp,
+		header: sh,
 	}
-
-	closeFp = false
-	return &cacheResponseWriter{CacheWriter: fp}
 }
 
 type DirCacheStorage struct {
@@ -276,34 +253,53 @@ func cacheDuration(resp *http.Response) time.Duration {
 }
 
 type cacheResponseWriter struct {
-	CacheWriter
+	w           CacheWriter
+	wroteHeader bool
+	header      http.Header
+	writeError  bool
 }
 
-func (c *cacheResponseWriter) CloseWithError(err error) {
-	c.Close()
+func (c *cacheResponseWriter) Header() http.Header {
+	return c.header
+}
 
-	if err == nil {
+func (c *cacheResponseWriter) WriteHeader(statusCode int) {
+	if c.wroteHeader {
+		panic("unreachable")
+	}
+	c.wroteHeader = true
+
+	fmt.Fprintf(c.w, "HTTP/1.1 %d %s\r\n", statusCode, http.StatusText(statusCode))
+	c.header.Write(c.w)
+	fmt.Fprintf(c.w, "\r\n")
+}
+
+func (c *cacheResponseWriter) Write(p []byte) (n int, err error) {
+	if !c.wroteHeader {
+		panic("unreachable")
+	}
+
+	n = len(p)
+
+	// can not write to storage, ex. storage full
+	if c.writeError {
 		return
 	}
 
-	c.CacheWriter.Remove()
+	_, err = c.w.Write(p)
+	if err != nil {
+		c.writeError = true
+		err = nil
+	}
+	return
 }
 
-type cacheResponseReader struct {
-	fp   io.ReadCloser
-	resp *http.Response
-}
+func (c *cacheResponseWriter) CloseWithError(err error) {
+	c.w.Close()
 
-func (c *cacheResponseReader) Close() error {
-	c.resp.Body.Close()
-	return c.fp.Close()
-}
-
-func (c *cacheResponseReader) WriteTo(w http.ResponseWriter) {
-	defer c.Close()
-	copyHeaders(w.Header(), c.resp.Header)
-	w.WriteHeader(c.resp.StatusCode)
-	copyBuffer(w, c.resp.Body, c.resp.ContentLength)
+	if err != nil || c.writeError {
+		c.w.Remove()
+	}
 }
 
 func extractHeaderValues(vs []string) map[string]string {
@@ -330,4 +326,13 @@ var alwaysCacheExt = map[string]bool{
 	".svg":  true,
 	".js":   true,
 	".css":  true,
+}
+
+type multiCloser []io.Closer
+
+func (m multiCloser) Close() error {
+	for _, x := range m {
+		x.Close()
+	}
+	return nil
 }

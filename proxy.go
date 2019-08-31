@@ -193,7 +193,8 @@ func (p *Proxy) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if resp := p.cache.Get(r); resp != nil {
 		w.Header().Set("X-Proxy-Cache-Status", "HIT")
-		resp.WriteTo(w)
+		copyResponse(resp, w)
+		resp.Body.Close()
 		return
 	}
 
@@ -222,19 +223,13 @@ func (p *Proxy) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 	resp.Header.Del("Keep-Alive")
 
 	if cw := p.cache.NewWriter(resp); cw != nil {
-		copyHeaders(w.Header(), resp.Header)
 		w.Header().Set("X-Proxy-Cache-Status", "MISS")
-		w.WriteHeader(resp.StatusCode)
-
-		_, err = copyBuffer(io.MultiWriter(w, cw), resp.Body, resp.ContentLength)
-		cw.CloseWithError(err)
+		cw.CloseWithError(copyResponse(resp, w, cw))
 		return
 	}
 
-	copyHeaders(w.Header(), resp.Header)
 	w.Header().Set("X-Proxy-Cache-Status", "DISABLE")
-	w.WriteHeader(resp.StatusCode)
-	copyBuffer(w, resp.Body, resp.ContentLength)
+	copyResponse(resp, w)
 }
 
 func (p *Proxy) proxyHTTPS(w http.ResponseWriter, r *http.Request) {
@@ -243,7 +238,6 @@ func (p *Proxy) proxyHTTPS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Proxy) tunnelHTTPS(w http.ResponseWriter, r *http.Request) {
-	// is request skipped, stream directly
 	if p.useTunnel(r) {
 		p.Logger.Printf("%s; tunneled", r.Host)
 
@@ -289,8 +283,26 @@ func copyHeaders(dst http.Header, src http.Header) {
 	}
 }
 
+func copyResponse(resp *http.Response, w ...http.ResponseWriter) error {
+	for _, w := range w {
+		copyHeaders(w.Header(), resp.Header)
+		w.WriteHeader(resp.StatusCode)
+	}
+	if len(w) == 1 {
+		_, err := copyBuffer(w[0], resp.Body, resp.ContentLength)
+		return err
+	}
+
+	ws := make([]io.Writer, 0, len(w))
+	for _, w := range w {
+		ws = append(ws, w)
+	}
+	_, err := copyBuffer(io.MultiWriter(ws...), resp.Body, resp.ContentLength)
+	return err
+}
+
 func stream(s1, s2 io.ReadWriter) error {
-	errCh := make(chan error)
+	errCh := make(chan error, 1)
 	go func() {
 		_, err := copyBuffer(s1, s2, 0)
 		errCh <- err
