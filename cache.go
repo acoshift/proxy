@@ -10,6 +10,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -49,17 +50,57 @@ func (n noCache) Remove(key string) {
 	return
 }
 
+type cacheLocker struct {
+	mu    sync.RWMutex
+	locks map[string]chan struct{}
+}
+
+func (l *cacheLocker) Lock(key string) func() {
+	l.mu.Lock()
+	if l.locks == nil {
+		l.locks = make(map[string]chan struct{})
+	}
+
+	// check is locked
+	ch := l.locks[key]
+	if ch != nil {
+		<-ch
+	}
+
+	// lock
+	ch = make(chan struct{})
+	l.locks[key] = ch
+	l.mu.Unlock()
+	return func() {
+		close(ch)
+	}
+}
+
+func (l *cacheLocker) Wait(key string) {
+	l.mu.RLock()
+	if l.locks == nil {
+		l.mu.RUnlock()
+		return
+	}
+	ch := l.locks[key]
+	l.mu.RUnlock()
+
+	if ch != nil {
+		<-ch
+	}
+}
+
 type cacheBackend struct {
 	Store CacheStorage
+
+	locker cacheLocker
 }
 
 func (c *cacheBackend) Get(r *http.Request) *http.Response {
 	key := cacheKey(r)
-	sKey := cacheStoreKey(key)
-	if sKey == "" {
-		return nil
-	}
+	c.locker.Wait(key)
 
+	sKey := cacheStoreKey(key)
 	fp := c.Store.Open(sKey)
 	if fp == nil {
 		return nil
@@ -111,9 +152,12 @@ func (c *cacheBackend) NewWriter(resp *http.Response) *cacheResponseWriter {
 	}
 
 	key := cacheKey(resp.Request)
+	unlock := c.locker.Lock(key)
+
 	sKey := cacheStoreKey(key)
 	fp := c.Store.Create(sKey)
 	if fp == nil {
+		unlock()
 		return nil
 	}
 
@@ -127,6 +171,7 @@ func (c *cacheBackend) NewWriter(resp *http.Response) *cacheResponseWriter {
 	return &cacheResponseWriter{
 		w:      fp,
 		header: sh,
+		unlock: unlock,
 	}
 }
 
@@ -224,6 +269,7 @@ type cacheResponseWriter struct {
 	wroteHeader bool
 	header      http.Header
 	writeError  bool
+	unlock      func()
 }
 
 func (c *cacheResponseWriter) Header() http.Header {
@@ -266,6 +312,10 @@ func (c *cacheResponseWriter) CloseWithError(err error) {
 
 	if err != nil || c.writeError {
 		c.w.Remove()
+	}
+
+	if c.unlock != nil {
+		c.unlock()
 	}
 }
 
