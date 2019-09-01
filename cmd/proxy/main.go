@@ -47,7 +47,6 @@ func main() {
 		PrivateKey:  privateKey,
 		Certificate: certificate,
 		TLSConfig: &tls.Config{
-			MinVersion:               tls.VersionTLS10,
 			PreferServerCipherSuites: true,
 		},
 		BlacklistHosts:   append(loadList(*proxyBlacklistFile), splitList(*proxyBlacklist)...),
