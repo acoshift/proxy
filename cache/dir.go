@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/acoshift/proxy"
@@ -54,8 +55,40 @@ func (s *Dir) Remove(key string) {
 	os.Remove(s.filename(key))
 }
 
+func (s *Dir) Range(f proxy.CacheRanger) {
+	p := s.Path
+	if !strings.HasSuffix(p, "/") {
+		p += "/"
+	}
+	filepath.Walk(p, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+
+		fp, err := os.Open(path)
+		if err != nil {
+			return nil
+		}
+		defer fp.Close()
+		it := fileRangeItem{fp: fp}
+		f(&it)
+		fp.Close()
+		if it.removed {
+			os.Remove(path)
+		}
+		return nil
+	})
+}
+
 func (s *Dir) Purge() {
-	filepath.Walk(s.Path, func(path string, info os.FileInfo, err error) error {
+	p := s.Path
+	if !strings.HasSuffix(p, "/") {
+		p += "/"
+	}
+	filepath.Walk(p, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -82,4 +115,17 @@ func (w *fileWriter) Close() error {
 
 func (w *fileWriter) Remove() error {
 	return os.Remove(w.fn)
+}
+
+type fileRangeItem struct {
+	fp      *os.File
+	removed bool
+}
+
+func (f *fileRangeItem) Read(p []byte) (n int, err error) {
+	return f.fp.Read(p)
+}
+
+func (f *fileRangeItem) Remove() {
+	f.removed = true
 }

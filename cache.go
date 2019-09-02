@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"net/textproto"
 	"path"
 	"strconv"
 	"strings"
@@ -28,6 +30,14 @@ type CacheStorage interface {
 	Create(key string) CacheWriter
 	Open(key string) io.ReadCloser
 	Remove(key string)
+	Range(f CacheRanger)
+}
+
+type CacheRanger func(r CacheRangeItem)
+
+type CacheRangeItem interface {
+	io.Reader
+	Remove()
 }
 
 type CacheWriter interface {
@@ -37,17 +47,10 @@ type CacheWriter interface {
 
 type noCache struct{}
 
-func (n noCache) Create(key string) CacheWriter {
-	return nil
-}
-
-func (n noCache) Open(key string) io.ReadCloser {
-	return nil
-}
-
-func (n noCache) Remove(key string) {
-	return
-}
+func (n noCache) Create(key string) CacheWriter { return nil }
+func (n noCache) Open(key string) io.ReadCloser { return nil }
+func (n noCache) Remove(key string)             {}
+func (n noCache) Range(f CacheRanger)           {}
 
 type cacheLocker struct {
 	mu    sync.RWMutex
@@ -92,6 +95,7 @@ func (l *cacheLocker) Wait(key string) {
 type cacheBackend struct {
 	Store            CacheStorage
 	MaxCacheItemSize int64
+	Logger           *log.Logger
 
 	locker cacheLocker
 }
@@ -127,8 +131,7 @@ func (c *cacheBackend) Get(r *http.Request) *http.Response {
 		resp.Header.Set("X-Proxy-Cache-Age", strconv.FormatInt(int64(time.Since(created).Seconds()), 10))
 	}
 
-	// check expires
-	if exp, _ := time.Parse(time.RFC3339, resp.Header.Get("X-Proxy-Expires")); time.Now().After(exp) {
+	if cacheExpired(resp.Header) {
 		// TODO: check can use stale
 		resp.Body.Close()
 		return nil
@@ -175,13 +178,31 @@ func (c *cacheBackend) NewWriter(resp *http.Response) *cacheResponseWriter {
 	}
 }
 
-func cacheKey(r *http.Request) string {
-	return r.URL.String()
+// Cleanup removes expired cache
+func (c *cacheBackend) Cleanup() {
+	var removed int64
+	c.Store.Range(func(it CacheRangeItem) {
+		tp := textproto.NewReader(bufio.NewReader(it))
+		tp.ReadLine() // HTTP/1.1 200 OK
+		mh, err := tp.ReadMIMEHeader()
+		if err != nil {
+			return
+		}
+		h := http.Header(mh)
+		if !cacheExpired(h) {
+			return
+		}
+
+		it.Remove()
+		removed++
+	})
+	c.Logger.Printf("%d cache expired; removed", removed)
 }
 
-func cacheStoreKey(key string) string {
-	h := sha256.Sum256([]byte(key))
-	return hex.EncodeToString(h[:])
+func (c *cacheBackend) AutoCleanup() {
+	defer time.AfterFunc(time.Hour, c.AutoCleanup)
+
+	c.Cleanup()
 }
 
 func (c *cacheBackend) cacheables(resp *http.Response) bool {
@@ -229,6 +250,15 @@ func (c *cacheBackend) cacheables(resp *http.Response) bool {
 	}
 
 	return true
+}
+
+func cacheKey(r *http.Request) string {
+	return r.URL.String()
+}
+
+func cacheStoreKey(key string) string {
+	h := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(h[:])
 }
 
 func cacheDuration(resp *http.Response) time.Duration {
@@ -317,6 +347,15 @@ func (c *cacheResponseWriter) CloseWithError(err error) {
 	if c.unlock != nil {
 		c.unlock()
 	}
+}
+
+func cacheExpired(h http.Header) bool {
+	exp, _ := time.Parse(time.RFC3339, h.Get("X-Proxy-Expires"))
+	if exp.IsZero() {
+		return true
+	}
+
+	return time.Now().After(exp)
 }
 
 func extractHeaderValues(vs []string) map[string]string {

@@ -38,6 +38,17 @@ func (s *Memory) Remove(key string) {
 	s.s.Delete(key)
 }
 
+func (s *Memory) Range(f proxy.CacheRanger) {
+	s.s.Range(func(key, value interface{}) bool {
+		it := memRangeItem{buf: bytes.NewReader(value.([]byte))}
+		f(&it)
+		if it.removed {
+			s.s.Delete(key)
+		}
+		return true
+	})
+}
+
 type memWriter struct {
 	key     string
 	set     func(key string, value []byte)
@@ -61,4 +72,17 @@ func (w *memWriter) Close() error {
 func (w *memWriter) Remove() error {
 	w.removed = true
 	return nil
+}
+
+type memRangeItem struct {
+	buf     *bytes.Reader
+	removed bool
+}
+
+func (m *memRangeItem) Read(p []byte) (n int, err error) {
+	return m.buf.Read(p)
+}
+
+func (m *memRangeItem) Remove() {
+	m.removed = true
 }
