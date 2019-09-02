@@ -227,6 +227,7 @@ func (p *Proxy) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 
 	resp.Header.Del("Keep-Alive")
+	resp.Header.Del("Alt-Svc")
 
 	if cw := p.cache.NewWriter(resp); cw != nil {
 		w.Header().Set("X-Proxy-Cache-Status", "MISS")
