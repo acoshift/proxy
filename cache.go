@@ -23,7 +23,7 @@ var proxyCacheHop = []string{
 }
 
 const (
-	maxCacheDuration = 3 * 365 * 24 * time.Hour
+	maxCacheDuration = 7 * 24 * time.Hour // TODO: config from main
 )
 
 type CacheStorage interface {
@@ -291,7 +291,11 @@ func cacheDuration(resp *http.Response) time.Duration {
 	if maxAge <= 0 {
 		return 0
 	}
-	return time.Duration(maxAge) * time.Second
+	maxAgeDuration := time.Duration(maxAge) * time.Second
+	if maxAgeDuration > maxCacheDuration {
+		maxAgeDuration = maxCacheDuration
+	}
+	return maxAgeDuration
 }
 
 type cacheResponseWriter struct {
