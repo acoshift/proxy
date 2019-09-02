@@ -274,10 +274,7 @@ func cacheDuration(resp *http.Response) time.Duration {
 		return maxCacheDuration
 	}
 	if _, ok := cc["private"]; ok {
-		// cache private without request cookie
-		if resp.Request.Header.Get("Cookie") != "" {
-			return 0
-		}
+		return 0
 	}
 	if _, ok := cc["no-cache"]; ok {
 		return 0
