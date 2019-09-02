@@ -50,6 +50,7 @@ func (p *Proxy) init() {
 		p.CacheStorage = noCache{}
 	}
 	p.cache.Store = p.CacheStorage
+	p.cache.MaxCacheItemSize = 16 * 1024 * 1024 // TODO: config from main
 
 	p.issuer = &issuer{
 		Logger:      p.Logger,

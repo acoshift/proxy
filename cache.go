@@ -21,7 +21,6 @@ var proxyCacheHop = []string{
 }
 
 const (
-	maxCacheItemSize = 32 * 1024 * 1024
 	maxCacheDuration = 3 * 365 * 24 * time.Hour
 )
 
@@ -91,7 +90,8 @@ func (l *cacheLocker) Wait(key string) {
 }
 
 type cacheBackend struct {
-	Store CacheStorage
+	Store            CacheStorage
+	MaxCacheItemSize int64
 
 	locker cacheLocker
 }
@@ -142,7 +142,7 @@ func (c *cacheBackend) Get(r *http.Request) *http.Response {
 }
 
 func (c *cacheBackend) NewWriter(resp *http.Response) *cacheResponseWriter {
-	if !cacheables(resp) {
+	if !c.cacheables(resp) {
 		return nil
 	}
 
@@ -184,7 +184,7 @@ func cacheStoreKey(key string) string {
 	return hex.EncodeToString(h[:])
 }
 
-func cacheables(resp *http.Response) bool {
+func (c *cacheBackend) cacheables(resp *http.Response) bool {
 	// request
 	r := resp.Request
 	if r.Method != http.MethodGet {
@@ -201,7 +201,7 @@ func cacheables(resp *http.Response) bool {
 	if resp.Header.Get("Set-Cookie") != "" {
 		return false
 	}
-	if resp.ContentLength > maxCacheItemSize {
+	if resp.ContentLength > c.MaxCacheItemSize {
 		return false
 	}
 
