@@ -43,12 +43,7 @@ func matchHost(index map[string]struct{}, host string) bool {
 }
 
 func isBrowser(r *http.Request) bool {
-	ua := r.UserAgent()
-	if strings.HasPrefix(ua, "Mozilla") {
-		return true
-	}
-
-	return false
+	return strings.HasPrefix(r.UserAgent(), "Mozilla/")
 }
 
 func copyHeaders(dst http.Header, src http.Header) {
