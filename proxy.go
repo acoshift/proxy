@@ -26,6 +26,7 @@ type Proxy struct {
 	TunnelHosts      []string
 	TunnelNotBrowser bool
 	RedirectHTTPS    bool
+	Auth             func(r *http.Request) bool
 
 	initOnce       sync.Once
 	issuer         *issuer
@@ -126,8 +127,22 @@ func (p *Proxy) useTunnel(r *http.Request) bool {
 	return false
 }
 
+func (p *Proxy) auth(r *http.Request) bool {
+	if p.Auth == nil {
+		return true
+	}
+	return p.Auth(r)
+}
+
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.initOnce.Do(p.init)
+
+	if !p.auth(r) {
+		w.Header().Set("Proxy-Authenticate", "Basic")
+		http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
+		return
+	}
+	r.Header.Del("Proxy-Authorization")
 
 	// blacklist
 	if matchHost(p.blacklistIndex, r.Host) {

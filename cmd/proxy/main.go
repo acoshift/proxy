@@ -1,8 +1,10 @@
 package main
 
 import (
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
 	"flag"
 	"fmt"
@@ -29,6 +31,8 @@ var (
 	cacheStorage          = flag.String("cache", "", "Cache storage backend. ex. memory, dir")
 	cacheDirPath          = flag.String("cache.dir.path", "", "Cache directory path")
 	logEnable             = flag.Bool("log", false, "Enable log")
+	authUser              = flag.String("auth.user", "", "Auth username")
+	authPass              = flag.String("auth.pass", "", "Auth password")
 )
 
 func main() {
@@ -58,6 +62,21 @@ func main() {
 		TunnelHosts:      append(loadList(*proxyTunnelFile), splitList(*proxyTunnel)...),
 		TunnelNotBrowser: *proxyTunnelNotBrowser,
 		RedirectHTTPS:    *proxyRedirectHTTPS,
+	}
+	if *authUser != "" && *authPass != "" {
+		p.Auth = func(r *http.Request) bool {
+			auth := r.Header.Get("Proxy-Authorization")
+			if auth == "" {
+				return false
+			}
+			user, pass, ok := parseBasicAuth(auth)
+			if !ok {
+				return false
+			}
+			okUser := subtle.ConstantTimeCompare([]byte(*authUser), []byte(user)) == 1
+			okPass := subtle.ConstantTimeCompare([]byte(*authPass), []byte(pass)) == 1
+			return okUser && okPass
+		}
 	}
 	switch *cacheStorage {
 	case "dir":
@@ -107,4 +126,22 @@ func splitList(list string) []string {
 		xs = append(xs, x)
 	}
 	return xs
+}
+
+// copy from http.parseBasicAuth
+func parseBasicAuth(auth string) (username, password string, ok bool) {
+	const prefix = "Basic "
+	if len(auth) < len(prefix) || !strings.EqualFold(auth[:len(prefix)], prefix) {
+		return
+	}
+	c, err := base64.StdEncoding.DecodeString(auth[len(prefix):])
+	if err != nil {
+		return
+	}
+	cs := string(c)
+	s := strings.IndexByte(cs, ':')
+	if s < 0 {
+		return
+	}
+	return cs[:s], cs[s+1:], true
 }
