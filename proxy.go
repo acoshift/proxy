@@ -75,7 +75,7 @@ func (p *Proxy) init() {
 				},
 				MaxRetries: 2,
 			}).DialContext,
-			MaxIdleConnsPerHost:   32,
+			MaxIdleConnsPerHost:   8,
 			IdleConnTimeout:       5 * time.Minute,
 			TLSHandshakeTimeout:   10 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
