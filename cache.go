@@ -74,6 +74,9 @@ func (l *cacheLocker) Lock(key string) func() {
 	l.locks[key] = ch
 	l.mu.Unlock()
 	return func() {
+		l.mu.Lock()
+		delete(l.locks, key)
+		l.mu.Unlock()
 		close(ch)
 	}
 }
